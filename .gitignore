@@ -1,0 +1,10 @@
+.env
+.env.*
+!.env.example
+node_modules/
+*.zip
+*.log
+GMP_CloseGap_App.html
+HANDOFF_GMP_CloseGap_App.md
+*Backup*.json
+*Conflict*.json
