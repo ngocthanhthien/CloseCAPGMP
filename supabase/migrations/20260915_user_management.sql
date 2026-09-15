@@ -1,52 +1,31 @@
--- Run once in the SQL Editor of a NEW Supabase project.
+-- Migration: Admin User Management & Account Status Support
+-- Safe to execute on existing Supabase projects.
 begin;
 
-create table public.gmp_members (
-  user_id uuid primary key references auth.users(id) on delete cascade,
-  display_name text not null,
-  role text not null check (role in ('admin','user')),
-  disabled boolean not null default false
-);
-alter table public.gmp_members enable row level security;
-revoke all on public.gmp_members from anon, authenticated;
-grant select on public.gmp_members to authenticated;
-create policy own_membership on public.gmp_members for select to authenticated
-  using (user_id = (select auth.uid()));
+-- 1. Bổ sung cột disabled vào bảng gmp_members nếu chưa có
+alter table public.gmp_members add column if not exists disabled boolean not null default false;
 
-create table public.gmp_records (
-  kind text not null check (kind in ('finding','settings')),
-  id text not null check (id ~ '^[a-zA-Z0-9_-]{1,100}$'),
-  record_key text generated always as (kind || ':' || id) stored unique,
-  data jsonb not null,
-  revision bigint not null default 1,
-  deleted boolean not null default false,
-  updated_at timestamptz not null default now(),
-  primary key (kind,id)
-);
-alter table public.gmp_records enable row level security;
-revoke all on public.gmp_records from anon, authenticated;
-grant select on public.gmp_records to authenticated;
+-- 2. Cập nhật chính sách RLS cho gmp_records (chặn người dùng bị vô hiệu hóa)
+drop policy if exists members_read on public.gmp_records;
 create policy members_read on public.gmp_records for select to authenticated
   using (exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
 
-create table public.gmp_audit (
-  id bigint generated always as identity primary key,
-  ts timestamptz not null default now(),
-  actor_id uuid not null,
-  actor_name text not null,
-  device text not null,
-  action text not null,
-  detail text not null,
-  area text not null
-);
-alter table public.gmp_audit enable row level security;
-revoke all on public.gmp_audit from anon, authenticated;
-grant select on public.gmp_audit to authenticated;
+-- 3. Cập nhật chính sách RLS cho gmp_audit (chặn người dùng bị vô hiệu hóa)
+drop policy if exists members_read_audit on public.gmp_audit;
 create policy members_read_audit on public.gmp_audit for select to authenticated
   using (exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
 
--- No direct writes. This function authenticates every caller, validates role and
--- expected revision, then writes the finding + audit entry in one transaction.
+-- 4. Cập nhật Storage policies cho gmp-mediasave
+drop policy if exists gmp_media_read on storage.objects;
+create policy gmp_media_read on storage.objects for select to authenticated
+  using(bucket_id='gmp-mediasave' and exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
+
+drop policy if exists gmp_media_insert on storage.objects;
+create policy gmp_media_insert on storage.objects for insert to authenticated
+  with check(bucket_id='gmp-mediasave' and (storage.foldername(name))[1]=(select auth.uid())::text
+    and exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
+
+-- 5. Cập nhật hàm RPC gmp_save_record để kiểm tra trạng thái disabled
 create or replace function public.gmp_save_record(
   p_kind text, p_id text, p_data jsonb, p_deleted boolean,
   p_revision bigint, p_device text
@@ -63,13 +42,14 @@ declare
   is_admin boolean;
 begin
   select * into actor from public.gmp_members where user_id=auth.uid();
-  if not found or coalesce(actor.disabled, false) then raise exception 'GMP_FORBIDDEN: approved membership required' using errcode='42501'; end if;
+  if not found or coalesce(actor.disabled, false) then
+    raise exception 'GMP_FORBIDDEN: approved membership required' using errcode='42501';
+  end if;
   is_admin := actor.role='admin';
   if p_kind is null or p_kind not in ('finding','settings') or p_id is null or p_id !~ '^[a-zA-Z0-9_-]{1,100}$'
     or p_revision is null or p_revision<0 or p_deleted is null or p_data is null then
     raise exception 'GMP_INVALID: invalid record';
   end if;
-  -- Per-record transaction lock also serializes simultaneous first inserts.
   perform pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(p_kind||':'||p_id,0));
   select * into previous from public.gmp_records where kind=p_kind and id=p_id for update;
   if coalesce(previous.revision,0) <> p_revision then
@@ -100,8 +80,6 @@ begin
       raise exception 'GMP_INVALID: finding text fields';
     end if;
     old_actions:=coalesce(previous.data->'actions','[]'::jsonb);
-    -- Keep historical multi-action findings. Never add more to an existing one.
-    -- Admin imports may contain historical multi-action findings on first insert.
     if (previous.id is not null and jsonb_array_length(p_data->'actions') > greatest(1,jsonb_array_length(old_actions)))
       or (previous.id is null and not is_admin and jsonb_array_length(p_data->'actions')>1) then
       raise exception 'GMP_INVALID: at most one new action';
@@ -115,7 +93,6 @@ begin
       raise exception 'GMP_INVALID: duplicate action id';
     end if;
     if not is_admin then
-      -- Users cannot remove or alter actions that QA is reviewing or has closed.
       for old_item in select value from jsonb_array_elements(old_actions) loop
         if old_item->>'status' in ('Pending','Closed') and not exists(
           select 1 from jsonb_array_elements(p_data->'actions') x where x=old_item
@@ -148,8 +125,6 @@ begin
         end if;
       end if;
     end loop;
-    -- Existing UI/report templates insert image URLs into HTML. Accept only inert
-    -- embedded raster images, not remote URLs, SVGs, or attribute injection.
     for img in
       select p_data->>'findingImg'
       union all select value->>'evidence' from jsonb_array_elements(p_data->'actions')
@@ -172,15 +147,5 @@ begin
   return result;
 end;
 $$;
-revoke all on function public.gmp_save_record(text,text,jsonb,boolean,bigint,text) from public,anon;
-grant execute on function public.gmp_save_record(text,text,jsonb,boolean,bigint,text) to authenticated;
 
-insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
-  values('gmp-mediasave','gmp-mediasave',false,20971520,array['image/jpeg','image/png','image/webp','image/heic','image/heif']);
-create policy gmp_media_read on storage.objects for select to authenticated
-  using(bucket_id='gmp-mediasave' and exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
-create policy gmp_media_insert on storage.objects for insert to authenticated
-  with check(bucket_id='gmp-mediasave' and (storage.foldername(name))[1]=(select auth.uid())::text
-    and exists(select 1 from public.gmp_members where user_id=(select auth.uid()) and not coalesce(disabled, false)));
--- No public access, overwrites, or deletion through the browser.
 commit;

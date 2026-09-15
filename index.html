@@ -193,7 +193,7 @@ table.data tr:hover td{background:#f7fbfa}
   <div class="tab guestHideTab" data-tab="mail" style="display:none">✉️ Mail</div>
   <div class="tab" data-tab="sync">🔄 Đồng bộ</div>
   <div class="tab adminTab" data-tab="settings" style="display:none">⚙️ Cài đặt</div>
-  <div class="tab adminTab" data-tab="users" style="display:none">👥 Tài khoản</div>
+  <div class="tab adminTab" data-tab="users" style="display:none">👥 Quản lý người dùng</div>
   <div class="tab" data-tab="guide">📖 Hướng dẫn</div>
 </div>
 <div class="wrap">
@@ -532,10 +532,41 @@ table.data tr:hover td{background:#f7fbfa}
 </div>
 
   <!-- ===================== USERS (ADMIN) ===================== -->
-  <div class="view" id="view-users"><div class="card">
-  <h2>👥 Tài khoản Supabase</h2><p id="cloudAccountInfo"></p>
-  <p>Quản trị viên tạo tài khoản tại Supabase → Authentication → Users, sau đó cấp quyền trong bảng gmp_members. Nhân viên không thể tự cấp quyền Admin.</p>
-</div></div>
+  <div class="view" id="view-users">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <div>
+          <h2 style="margin:0">👥 Quản lý người dùng</h2>
+          <div class="hint" style="margin:3px 0 0" id="cloudAccountInfo">Quản lý danh sách tài khoản, phân quyền và trạng thái hoạt động trên hệ thống.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn sm gray" id="userRefreshBtn" type="button">🔄 Tải lại</button>
+          <button class="btn sm" id="userOpenAddModalBtn" type="button">➕ Thêm người dùng</button>
+        </div>
+      </div>
+
+      <div id="userMgmtBanner" style="display:none;padding:9px 12px;border-radius:8px;font-size:13px;margin-bottom:12px"></div>
+
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13.5px;text-align:left">
+          <thead>
+            <tr style="border-bottom:2px solid var(--line);background:var(--bg1)">
+              <th style="padding:10px 12px">Họ và tên</th>
+              <th style="padding:10px 12px">Email</th>
+              <th style="padding:10px 12px;width:120px">Vai trò</th>
+              <th style="padding:10px 12px;width:130px">Trạng thái</th>
+              <th style="padding:10px 12px;width:170px;text-align:right">Thao tác</th>
+            </tr>
+          </thead>
+          <tbody id="userTableBody">
+            <tr>
+              <td colspan="5" style="padding:28px 12px;text-align:center;color:var(--muted)">Đang tải danh sách người dùng...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <!-- ===================== GUIDE ===================== -->
   <div class="view" id="view-guide"><div class="card">
@@ -581,6 +612,41 @@ table.data tr:hover td{background:#f7fbfa}
       <button class="btn sm gray" id="findingDetailCloseBtn">✕ Đóng</button>
     </div>
     <div id="findingDetailBody"></div>
+  </div>
+</div>
+<div class="modalOverlay" id="userAddModal">
+  <div class="modalBox" style="max-width:480px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <h3 style="margin:0">➕ Thêm người dùng mới</h3>
+      <button class="btn sm gray" id="userAddCloseBtn" type="button">✕ Đóng</button>
+    </div>
+    <form id="userAddForm">
+      <div class="field" style="margin-bottom:10px">
+        <label for="userAddName">Họ và tên <span class="reqstar">*</span></label>
+        <input id="userAddName" type="text" required placeholder="Ví dụ: Nguyễn Văn A">
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label for="userAddEmail">Email đăng nhập <span class="reqstar">*</span></label>
+        <input id="userAddEmail" type="email" required placeholder="user@ildcoffee.com">
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label for="userAddPass">Mật khẩu ban đầu <span class="reqstar">*</span></label>
+        <input id="userAddPass" type="password" minlength="6" required placeholder="Tối thiểu 6 ký tự">
+        <div class="hint" style="margin:2px 0 0">Mật khẩu tối thiểu 6 ký tự. Người dùng dùng email và mật khẩu này để đăng nhập.</div>
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label for="userAddRole">Vai trò <span class="reqstar">*</span></label>
+        <select id="userAddRole">
+          <option value="user" selected>User (Nhân viên)</option>
+          <option value="admin">Admin (Quản trị viên / QA)</option>
+        </select>
+      </div>
+      <div id="userAddErr" role="alert" style="color:var(--red);font-size:13px;margin-bottom:10px;display:none"></div>
+      <div class="modalActions">
+        <button class="btn gray" id="userAddCancelBtn" type="button">Hủy</button>
+        <button class="btn" id="userAddSubmitBtn" type="submit">Tạo tài khoản</button>
+      </div>
+    </form>
   </div>
 </div>
 <div class="lightbox" id="lightbox"><img id="lightboxImg" src=""></div>
@@ -667,9 +733,147 @@ function applyUserUI(){
   $$(".guestHideTab").forEach(el=>el.style.display=CURRENT_USER ? "" : "none");
   applyTabOrder();
 }
+let USERS_CACHE = [];
+let USERS_LOADING = false;
+
 function renderUsers(){
-  $("#cloudAccountInfo").textContent = "Tài khoản: " + (CURRENT_USER?.name || "") +
-    (CURRENT_USER?.admin ? " · Admin/QA" : " · Nhân viên");
+  const info = $("#cloudAccountInfo");
+  if(info){
+    info.textContent = "Tài khoản hiện tại: " + (CURRENT_USER?.name || "") +
+      (CURRENT_USER?.admin ? " · Admin/QA" : " · Nhân viên");
+  }
+  if(CURRENT_USER?.admin){
+    fetchAndRenderUsers();
+  }
+}
+
+async function fetchAndRenderUsers(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)) return;
+  const tbody = $("#userTableBody");
+  const banner = $("#userMgmtBanner");
+  if(!tbody) return;
+  if(USERS_LOADING) return;
+  USERS_LOADING = true;
+  tbody.innerHTML = `<tr><td colspan="5" style="padding:28px 12px;text-align:center;color:var(--muted)">Đang tải danh sách người dùng từ máy chủ…</td></tr>`;
+  if(banner) banner.style.display = "none";
+
+  try {
+    if(!window.GMPCloud || !window.GMPCloud.adminListUsers){
+      throw new Error("Chức năng đám mây chưa sẵn sàng hoặc thư viện chưa tải xong.");
+    }
+    const res = await window.GMPCloud.adminListUsers();
+    USERS_CACHE = res.users || [];
+    renderUserTable();
+  } catch(err){
+    console.error("Lỗi tải danh sách người dùng:", err);
+    if(banner){
+      banner.style.display = "block";
+      banner.style.background = "#fee2e2";
+      banner.style.color = "#b91c1c";
+      banner.textContent = "Không thể tải danh sách người dùng: " + err.message + ". Vui lòng kiểm tra Supabase Edge Function đã được deploy theo README.";
+    }
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:24px 12px;text-align:center;color:var(--red)">Lỗi: ${esc(err.message)}</td></tr>`;
+  } finally {
+    USERS_LOADING = false;
+  }
+}
+
+function renderUserTable(){
+  const tbody = $("#userTableBody");
+  if(!tbody) return;
+  if(!USERS_CACHE.length){
+    tbody.innerHTML = `<tr><td colspan="5" style="padding:24px 12px;text-align:center;color:var(--muted)">Chưa có người dùng nào được ghi nhận.</td></tr>`;
+    return;
+  }
+
+  const callerId = window.GMPCloud?.cacheId?.split('_')?.pop() || "";
+  tbody.innerHTML = USERS_CACHE.map(u => {
+    const isCaller = u.userId === callerId;
+    const isAdmin = u.role === "admin";
+    const isActive = u.status === "Active";
+
+    const roleBadge = isAdmin
+      ? `<span class="tag" style="background:#ede9fe;color:#6d28d9;font-weight:700">Admin</span>`
+      : `<span class="tag" style="background:#e0f2fe;color:#0369a1;font-weight:700">User</span>`;
+
+    const statusBadge = isActive
+      ? `<span class="tag st-closed">Hoạt động</span>`
+      : `<span class="tag st-late">Vô hiệu hóa</span>`;
+
+    const targetNewRole = isAdmin ? "user" : "admin";
+    const roleBtnText = isAdmin ? "Hạ xuống User" : "Nâng lên Admin";
+    const statusBtnText = isActive ? "Vô hiệu hóa" : "Kích hoạt";
+    const statusBtnClass = isActive ? "red" : "teal";
+
+    return `
+      <tr style="border-bottom:1px solid var(--line2)">
+        <td style="padding:10px 12px;font-weight:600">
+          ${esc(u.displayName)} ${isCaller ? '<span style="font-size:11px;color:var(--muted)">(Bạn)</span>' : ''}
+        </td>
+        <td style="padding:10px 12px;color:var(--muted)">${esc(u.email)}</td>
+        <td style="padding:10px 12px">${roleBadge}</td>
+        <td style="padding:10px 12px">${statusBadge}</td>
+        <td style="padding:10px 12px;text-align:right">
+          <div style="display:inline-flex;gap:6px;justify-content:flex-end">
+            <button class="btn sm gray" onclick="handleUserChangeRole('${esc(u.userId)}', '${targetNewRole}')" title="${roleBtnText}">
+              ${roleBtnText}
+            </button>
+            <button class="btn sm ${statusBtnClass}" ${isCaller ? "disabled title='Không thể khóa tài khoản của chính bạn'" : ""} onclick="handleUserToggleStatus('${esc(u.userId)}', ${isActive})">
+              ${statusBtnText}
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+async function handleUserChangeRole(userId, newRole){
+  const target = USERS_CACHE.find(u => u.userId === userId);
+  const name = target ? target.displayName : "người dùng này";
+  const roleName = newRole === "admin" ? "Admin (Quản trị viên)" : "User (Nhân viên)";
+  if(!confirm(`Bạn có chắc chắn muốn đổi vai trò của "${name}" thành ${roleName}?`)) return;
+
+  try {
+    toast("Đang cập nhật vai trò…");
+    await window.GMPCloud.adminChangeRole(userId, newRole);
+    toast("✅ Đã cập nhật vai trò thành công!");
+    await fetchAndRenderUsers();
+  } catch(err){
+    alert("Không thể đổi vai trò: " + err.message);
+  }
+}
+
+async function handleUserToggleStatus(userId, currentlyActive){
+  const target = USERS_CACHE.find(u => u.userId === userId);
+  const name = target ? target.displayName : "người dùng này";
+  const confirmMsg = currentlyActive
+    ? `Bạn có chắc chắn muốn VÔ HIỆU HÓA tài khoản "${name}"?\nNgười dùng sẽ bị khóa và không thể đăng nhập hoặc thao tác trên hệ thống. Dữ liệu lịch sử vẫn được bảo toàn.`
+    : `Kích hoạt lại tài khoản cho "${name}"?`;
+
+  if(!confirm(confirmMsg)) return;
+
+  try {
+    toast(currentlyActive ? "Đang vô hiệu hóa…" : "Đang kích hoạt…");
+    await window.GMPCloud.adminSetStatus(userId, currentlyActive);
+    toast(`✅ Đã ${currentlyActive ? 'vô hiệu hóa' : 'kích hoạt'} thành công!`);
+    await fetchAndRenderUsers();
+  } catch(err){
+    alert("Thao tác thất bại: " + err.message);
+  }
+}
+
+function openUserAddModal(){
+  $("#userAddForm").reset();
+  const errBox = $("#userAddErr");
+  if(errBox){ errBox.style.display = "none"; errBox.textContent = ""; }
+  $("#userAddRole").value = "user";
+  $("#userAddModal").classList.add("show");
+  $("#userAddName").focus();
+}
+
+function closeUserAddModal(){
+  $("#userAddModal").classList.remove("show");
 }
 
 /* ============================================================
@@ -1002,7 +1206,7 @@ const GUEST_TAB_ORDER = ["dash","list","action","ownerguide","add","sync","guide
 const TAB_LABELS = {
   dash:"🏠 Tổng quan", action:"🛠️ Đóng Gap (Owner)", ownerguide:"📘 Hướng dẫn Đóng Gap",
   add:"📝 Ghi nhận Finding", confirm:"✅ Xác nhận Gap (Admin)", list:"📋 Danh sách Finding",
-  mail:"✉️ Mail", sync:"🔄 Đồng bộ", settings:"⚙️ Cài đặt", users:"👥 Tài khoản", guide:"📖 Hướng dẫn"
+  mail:"✉️ Mail", sync:"🔄 Đồng bộ", settings:"⚙️ Cài đặt", users:"👥 Quản lý người dùng", guide:"📖 Hướng dẫn"
 };
 
 function newAction(over){
@@ -1414,6 +1618,11 @@ function overallStats(){
    TABS
 ============================================================ */
 function switchTab(name){
+  if(name==="users" && !(CURRENT_USER && CURRENT_USER.admin)){
+    toast("⚠️ Chỉ Quản trị viên mới có quyền truy cập Quản lý người dùng");
+    switchTab("dash");
+    return;
+  }
   $$(".tab").forEach(t=> t.classList.toggle("active", t.dataset.tab===name));
   $$(".view").forEach(v=> v.classList.toggle("active", v.id==="view-"+name));
   if(name==="dash") renderDashboard();
@@ -3564,6 +3773,47 @@ async function boot(){
     await saveSettings();
     logAction("Sửa Email khu vực", "Cập nhật danh sách email liên hệ theo khu vực", "");
     toast("✅ Đã lưu danh sách email");
+  });
+
+  // Quản lý người dùng (Admin)
+  $("#userRefreshBtn")?.addEventListener("click", fetchAndRenderUsers);
+  $("#userOpenAddModalBtn")?.addEventListener("click", openUserAddModal);
+  $("#userAddCloseBtn")?.addEventListener("click", closeUserAddModal);
+  $("#userAddCancelBtn")?.addEventListener("click", closeUserAddModal);
+  $("#userAddForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#userAddSubmitBtn");
+    const errBox = $("#userAddErr");
+    if(errBox){ errBox.style.display = "none"; errBox.textContent = ""; }
+    if(btn){ btn.disabled = true; btn.textContent = "Đang tạo…"; }
+
+    const displayName = $("#userAddName").value.trim();
+    const email = $("#userAddEmail").value.trim();
+    const password = $("#userAddPass").value;
+    const role = $("#userAddRole").value;
+
+    try {
+      if(!displayName) throw new Error("Họ và tên không được để trống.");
+      if(!email) throw new Error("Email không được để trống.");
+      if(password.length < 6) throw new Error("Mật khẩu phải từ 6 ký tự trở lên.");
+
+      await window.GMPCloud.adminCreateUser({ displayName, email, password, role });
+      closeUserAddModal();
+      toast("✅ Đã tạo tài khoản người dùng thành công!");
+      await fetchAndRenderUsers();
+    } catch(err) {
+      if(errBox){
+        errBox.textContent = err.message;
+        errBox.style.display = "block";
+      } else {
+        alert("Lỗi: " + err.message);
+      }
+    } finally {
+      if(btn){
+        btn.disabled = false;
+        btn.textContent = "Tạo tài khoản";
+      }
+    }
   });
 }
 // boot is called only after Supabase validates authentication and membership.

@@ -13,7 +13,10 @@
   let durable = true, saveChain = Promise.resolve(), mediaPending = 0, mediaErrors = 0;
   let releaseLock;
   const config = window.GMP_CONFIG || {};
-  const api = window.GMPCloud = {cacheId:'', schedule, backupMedia};
+  const api = window.GMPCloud = {
+    cacheId:'', schedule, backupMedia,
+    adminListUsers, adminCreateUser, adminChangeRole, adminSetStatus
+  };
   const localSet = idbSet;
 
   function status(message, warn = false) {
@@ -171,6 +174,31 @@
       p.append(backup,use); box.append(p);
     }
   }
+
+  async function adminInvoke(action, params = {}) {
+    if(!client) throw new Error('Chưa kết nối Supabase.');
+    if(!CURRENT_USER?.admin) throw new Error('Chỉ Quản trị viên mới có quyền thực hiện chức năng này.');
+    const { data, error } = await client.functions.invoke('admin-users', {
+      body: { action, ...params }
+    });
+    if(error) {
+      let msg = error.message;
+      try {
+        if(error.context && typeof error.context.json === 'function') {
+          const errBody = await error.context.json();
+          if(errBody?.error) msg = errBody.error;
+        }
+      } catch {}
+      throw new Error(msg || 'Lỗi kết nối máy chủ quản trị (admin-users)');
+    }
+    if(data?.error) throw new Error(data.error);
+    return data;
+  }
+  async function adminListUsers() { return adminInvoke('list-users'); }
+  async function adminCreateUser(payload) { return adminInvoke('create-user', payload); }
+  async function adminChangeRole(userId, newRole) { return adminInvoke('change-role', { targetUserId: userId, newRole }); }
+  async function adminSetStatus(userId, disabled) { return adminInvoke(disabled ? 'disable-user' : 'enable-user', { targetUserId: userId }); }
+
   async function member() {
     const {data:{user},error:authError}=await client.auth.getUser();
     if(authError || !user) { lock('Phiên đăng nhập đã hết hạn. Hãy tải lại trang và đăng nhập.'); throw authError || new Error('Chưa đăng nhập'); }
@@ -178,9 +206,10 @@
       lock('Tài khoản đã thay đổi. Tải lại trang để mở dữ liệu đúng tài khoản.');
       throw new Error('Tài khoản đã thay đổi; cần tải lại trang');
     }
-    const {data,error}=await client.from('gmp_members').select('user_id,display_name,role').eq('user_id',user.id).maybeSingle();
+    const {data,error}=await client.from('gmp_members').select('user_id,display_name,role,disabled').eq('user_id',user.id).maybeSingle();
     if(error) throw error;
     if(!data) { lock('Tài khoản chưa được cấp quyền. Liên hệ Admin để thêm vào gmp_members.'); throw new Error('Chưa có quyền thành viên'); }
+    if(data.disabled) { lock('Tài khoản của bạn đã bị vô hiệu hóa. Vui lòng liên hệ Quản trị viên.'); throw new Error('Tài khoản bị vô hiệu hóa'); }
     CURRENT_USER={code:user.email,name:data.display_name || user.email,admin:data.role==='admin'};
     accessGranted=true;
     if(started) applyUserUI();

@@ -56,10 +56,58 @@ GitHub Pages chỉ host giao diện tĩnh. Supabase mới lưu dữ liệu, xác
 - Đồng bộ thư mục, dọn file thiết bị cũ, mốc ngắt đồng bộ, tài khoản/mật khẩu local được thay thế trong bản web. Bản offline gốc giữ nguyên.
 - CSV vẫn xuất toàn bộ dữ liệu như bản gốc. Excel/HTML giữ các bộ lọc hiện có. Email chỉ tạo file .eml để người dùng tự kiểm tra/gửi trong Outlook.
 
+## 5. Thiết lập Quản lý Người dùng (Admin User Management Setup)
+
+Chức năng Quản lý Người dùng cho phép Admin tạo tài khoản nhân viên, đổi vai trò (User ↔ Admin), và vô hiệu hóa/kích hoạt tài khoản trực tiếp trên giao diện web mà không cần thao tác thủ công trong Supabase Dashboard hay SQL Editor.
+
+### 5.1. Chạy SQL Migration
+Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260915_user_management.sql`, copy toàn bộ nội dung và bấm **Run**.
+Script này sẽ:
+- Thêm cột `disabled` vào bảng `gmp_members`.
+- Cập nhật các chính sách bảo mật RLS và hàm `gmp_save_record` để tự động chặn các tài khoản bị vô hiệu hóa.
+
+### 5.2. Cách tạo tài khoản Admin đầu tiên (nếu chưa có)
+Nếu hệ thống chưa có tài khoản Admin nào:
+1. Vào **Authentication → Users → Add user → Create new user**, tạo email và mật khẩu cho Admin.
+2. Vào **SQL Editor**, chạy lệnh sau (thay `EMAIL_ADMIN_CUA_BAN` và tên thật):
+```sql
+insert into public.gmp_members(user_id, display_name, role, disabled)
+select id, 'Tên Quản Trị Viên', 'admin', false
+from auth.users where lower(email) = lower('EMAIL_ADMIN_CUA_BAN')
+on conflict(user_id) do update
+set display_name=excluded.display_name, role='admin', disabled=false;
+```
+
+### 5.3. Triển khai Edge Function `admin-users`
+Hệ thống sử dụng một Supabase Edge Function có tên `admin-users` (được lưu tại `supabase/functions/admin-users/index.ts`). Mọi thao tác đặc quyền được thực thi trên máy chủ và kiểm tra phân quyền độc lập.
+
+**Các bước triển khai bằng dòng lệnh (Terminal / PowerShell):**
+```bash
+# 1. Đăng nhập tài khoản Supabase (chỉ cần làm lần đầu)
+npx supabase login
+
+# 2. Liên kết với project của bạn (thay mã project của bạn từ URL Supabase Dashboard)
+npx supabase link --project-ref qrodjneqbfvgfisjvzwp
+
+# 3. Triển khai Edge Function
+npx supabase functions deploy admin-users
+```
+*(Ghi chú: Các biến môi trường `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` được Supabase tự động cung cấp trong môi trường chạy của Edge Function, bạn không cần phải tự cấu hình).*
+
+### 5.4. Kiểm tra hoạt động (Verification)
+1. **Kiểm tra quyền Admin:** Đăng nhập bằng tài khoản Admin. Bạn sẽ thấy tab `👥 Quản lý người dùng` xuất hiện trên thanh điều hướng. Mở tab ra sẽ thấy danh sách toàn bộ người dùng hiện có.
+2. **Kiểm tra Tạo người dùng:** Bấm nút `➕ Thêm người dùng`, điền Họ tên, Email, Mật khẩu (tối thiểu 6 ký tự), chọn vai trò `User` hoặc `Admin` và bấm `Tạo tài khoản`.
+3. **Kiểm tra Đổi vai trò:** Bấm `Nâng lên Admin` hoặc `Hạ xuống User` ở cột Thao tác, xác nhận hộp thoại để hoàn tất.
+4. **Kiểm tra Vô hiệu hóa:** Bấm `Vô hiệu hóa` để khóa tài khoản một nhân viên. Khi bị khóa, tài khoản đó không thể đăng nhập hoặc lưu dữ liệu; dữ liệu lịch sử và Audit Log vẫn được bảo toàn nguyên vẹn. Bấm `Kích hoạt` để mở khóa lại.
+5. **Kiểm tra tài khoản User thường:** Đăng nhập bằng tài khoản vừa tạo (role = `user`). Tab `👥 Quản lý người dùng` hoàn toàn bị ẩn; nếu cố tình gõ lệnh `switchTab('users')` từ Console, hệ thống sẽ cảnh báo và chặn lại ngay lập tức.
+
+---
+
 ## Kiểm tra trước bàn giao
 
 SQL được thực thi trong PostgreSQL WASM (PGlite) với schema Auth/Storage mô phỏng: đã kiểm tra quyền khách, người ngoài, nhân viên/Admin, revision conflict, xoá/khôi phục, ảnh không hợp lệ, ghi nhật ký.
 Luồng trình duyệt được kiểm tra bằng jsdom + IndexedDB mô phỏng + Supabase mock: đăng nhập, khởi động, lưu, mất mạng/tải lại, giữ xung đột và chọn bản máy chủ.
 Chưa kiểm thử end-to-end với Supabase/GitHub thật vì chưa có project/repository.
 
-Tài liệu chính thức: [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), [Supabase Auth](https://supabase.com/docs/guides/auth/passwords), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+Tài liệu chính thức: [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), [Supabase Auth](https://supabase.com/docs/guides/auth/passwords), [Supabase Edge Functions](https://supabase.com/docs/guides/functions), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+
