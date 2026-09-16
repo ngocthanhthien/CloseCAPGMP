@@ -46,11 +46,11 @@ GitHub Pages chỉ host giao diện tĩnh. Supabase mới lưu dữ liệu, xác
 
 - Nhân viên: xem dữ liệu chung, tạo Finding, thêm/sửa/xoá Action Open, gửi Pending khi có ảnh. Action Pending/Closed được khoá với nhân viên. Admin: sửa Finding/cài đặt, duyệt/từ chối/mở lại và đánh dấu xoá.
 - Finding mới tối đa một Action. Admin được nhập Finding lịch sử có nhiều Action; không được tăng thêm số Action của Finding đã có nhiều Action.
-- Lưu sau khoảng 1,5 giây ngừng nhập; lấy dữ liệu từ máy khác mỗi 30 giây khi không nhập liệu. Nút Đồng bộ dùng khi muốn lấy/gửi ngay. Đây là polling, không phải realtime subscription.
+- Lưu sau khoảng 1,5 giây ngừng nhập; lấy dữ liệu từ máy khác mỗi 30 giây khi không nhập liệu. Nút Đồng bộ dùng khi muốn lấy/gửi ngay. Đây là polling, không phải realtime subscription. Vòng lấy dữ liệu tự động mỗi 30 giây chỉ tải bản ghi thay đổi kể từ lần đồng bộ trước (dựa trên `updated_at`), không tải lại toàn bộ dữ liệu mỗi lần — giảm dung lượng và thời gian đáng kể khi đã có nhiều Finding. Lần đăng nhập đầu tiên trên một máy, bấm nút Đồng bộ, hoặc khi mạng vừa nối lại vẫn tải đầy đủ để đối chiếu (safety net).
 - Mỗi trình duyệt chỉ một tab chỉnh sửa cho cùng tài khoản/project. Bản chờ trên máy tách theo project và tài khoản, lưu cùng phiên bản máy chủ trong một giao dịch IndexedDB.
 - Bản chờ giữ khi mất mạng; sau tải lại cần xác thực online để mở app. Không xóa cache trình duyệt nếu còn thay đổi chưa gửi. Không cam kết mở offline từ đầu.
 - Xung đột không tự chọn bên thắng: tải hai bản để đối chiếu, chọn bản máy chủ, sau đó nhập lại thay đổi cần giữ. Bản chờ không tự ghi đè máy chủ.
-- Ảnh nén lưu dạng data URL trong JSONB để báo cáo Excel/HTML và backup vẫn hoạt động. Tối đa 20 MB mỗi Finding. Đây là lựa chọn tương thích cho quy mô nội bộ, chưa tối ưu cho kho ảnh rất lớn; mỗi lượt đồng bộ đọc toàn bộ bản ghi theo trang 100.
+- Ảnh nén lưu dạng data URL trong JSONB để báo cáo Excel/HTML và backup vẫn hoạt động. Tối đa 20 MB mỗi Finding. Đây là lựa chọn tương thích cho quy mô nội bộ, chưa tối ưu cho kho ảnh rất lớn: mỗi Finding thay đổi vẫn gửi/nhận trọn vẹn ảnh nhúng trong đó (không tách phần ảnh riêng), phân trang tối đa 100 bản ghi/lượt gọi.
 - Ảnh gốc mới được tải riêng vào bucket private `gmp-mediasave`, tối đa 20 MiB/file; có thông báo khi lỗi. Tải ảnh gốc không có hàng đợi bền vững qua lần đóng trang: nếu tải thất bại, giữ file gốc và chọn lại ảnh khi mạng ổn định. Gỡ ảnh trong Finding không xóa bản sao gốc.
 - Nhật ký do máy chủ tự ghi với danh tính xác thực, hiển thị 100 mục gần nhất. Máy chủ tự động xoá mục cũ hơn 7 ngày bằng tác vụ định kỳ (`pg_cron`, xem mục 6). Dấu xoá Finding vẫn giữ bản cũ trong database để tránh hồi sinh dữ liệu và hỗ trợ quản trị khôi phục — không liên quan đến nhật ký thao tác.
 - Đồng bộ thư mục, dọn file thiết bị cũ, mốc ngắt đồng bộ, tài khoản/mật khẩu local được thay thế trong bản web. Bản offline gốc giữ nguyên.
@@ -111,6 +111,12 @@ Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260
 - Lên lịch chạy hằng ngày lúc 03:00 UTC, xoá mọi mục nhật ký cũ hơn 7 ngày.
 
 Có thể kiểm tra job đã chạy tại SQL Editor bằng `select * from cron.job;` và `select * from cron.job_run_details order by start_time desc limit 20;`.
+
+## 7. Đồng bộ tăng trưởng (Incremental Sync)
+
+Vòng đồng bộ nền mỗi 30 giây chỉ tải bản ghi có `updated_at` mới hơn lần đồng bộ gần nhất, thay vì tải lại toàn bộ `gmp_records` (kể cả ảnh nhúng) mỗi lần — giảm mạnh dung lượng và thời gian cho các lần đồng bộ định kỳ khi dữ liệu đã lớn. Lần đăng nhập đầu tiên trên một máy, bấm nút Đồng bộ thủ công, hoặc khi mạng vừa nối lại vẫn tải đầy đủ để tự đối chiếu, phòng trường hợp dữ liệu máy bị lệch.
+
+Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260917_incremental_sync.sql`, copy toàn bộ nội dung và bấm **Run**. Script này tạo index trên cột `updated_at` của `gmp_records` để truy vấn tăng trưởng nhanh.
 
 ---
 

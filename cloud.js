@@ -11,6 +11,10 @@
   const areaDefaults = AREAS.map(a => ({code:a.code, pic:a.pic}));
   let client, started = false, starting = false, timer, bases = {}, conflicts = new Map(), accessGranted=false;
   let durable = true, saveChain = Promise.resolve(), mediaPending = 0, mediaErrors = 0;
+  // High-water mark (server updated_at) of the newest record already merged locally — lets
+  // routine polling fetch only what changed instead of re-downloading every record (and its
+  // embedded images) every 30 seconds.
+  let syncedAt = '';
   let releaseLock;
   const config = window.GMP_CONFIG || {};
   const api = window.GMPCloud = {
@@ -26,7 +30,7 @@
   }
   function snapshot() {
     return {findings:clone(FINDINGS), settings:clone(SETTINGS),
-      deleted:clone(DELETED_IDS), bases:clone(bases)};
+      deleted:clone(DELETED_IDS), bases:clone(bases), syncedAt};
   }
   function persist() {
     const copy = snapshot();
@@ -83,12 +87,15 @@
       else FINDINGS.push(clone(row.data));
     }
   }
-  async function allRows() {
+  async function changedRows(since) {
     const rows = [];
-    // Keyset pagination handles projects with more than the API row limit.
+    // Keyset pagination (on the unique record_key) handles more rows than the API page limit;
+    // the updated_at filter is a fixed boundary from before this fetch started, so it stays
+    // correct across pages exactly like the old full-table version did.
     let last = '';
     for(;;) {
       let query = client.from('gmp_records').select('*').order('record_key').limit(100);
+      if(since) query = query.gt('updated_at',since);
       if(last) query = query.gt('record_key',last);
       const {data,error} = await query;
       if(error) throw error;
@@ -101,7 +108,7 @@
     return document.activeElement?.matches('input,textarea,select') ||
       $('#findingDetailModal').classList.contains('show') || EDITING_FINDINGS.size>0;
   }
-  async function sync(silent = false, skipMemberCheck = false) {
+  async function sync(silent = false, skipMemberCheck = false, forceFull = false) {
     if(!started || syncing) return;
     if(silent && editing()) { schedule(); return; }
     syncing = true;
@@ -111,6 +118,7 @@
       // start() already verified membership — avoids a redundant round-trip at login.
       if(!skipMemberCheck) await member();
       status('Đang đồng bộ Supabase…');
+      let watermark = syncedAt;
       // Capture outbound values before network calls; keep later edits intact.
       for(const change of pending()) {
         if(conflicts.has(change.key)) continue;
@@ -125,18 +133,24 @@
         }
         // Only update the revision that corresponds to the exact sent value.
         bases[change.key] = clone(data);
+        if(data.updated_at && data.updated_at > watermark) watermark = data.updated_at;
         if(same(localValue(change.kind,change.id),sent)) applyRow(data);
         await persist();
       }
-      const rows = await allRows();
+      // Routine polling only needs records changed since the last successful sync — re-reading
+      // every record (and its embedded images) every 30 seconds doesn't scale. A manual sync,
+      // reconnect, or first-ever login on this device still does a full reconciliation.
+      const rows = await changedRows(forceFull ? '' : syncedAt);
       for(const row of rows) {
         const key = row.kind+':'+row.id;
+        if(row.updated_at && row.updated_at > watermark) watermark = row.updated_at;
         if(changed(row.kind,row.id)) {
           if(same(localValue(row.kind,row.id),row.deleted ? null : row.data)) {
             bases[key]=clone(row); conflicts.delete(key); // Successful write whose response was lost.
           } else if(!bases[key] || row.revision !== bases[key].revision) conflicts.set(key,row);
         } else { applyRow(row); bases[key]=clone(row); conflicts.delete(key); }
       }
+      syncedAt = watermark;
       await persist();
       const {data:logs,error:logError} = await client.from('gmp_audit').select('*').order('ts',{ascending:false}).limit(100);
       if(logError) throw logError;
@@ -241,8 +255,8 @@
       if(!acquired) throw new Error('App đang mở ở tab khác. Đóng tab đó rồi tải lại trang này.');
       const cache=await idbGet('cloudWorkspace');
       const hadCache=!!cache;
-      if(cache) { FINDINGS=cache.findings || []; SETTINGS=cache.settings || clone(defaults); DELETED_IDS=cache.deleted || []; bases=cache.bases || {}; }
-      else { FINDINGS=[]; SETTINGS=clone(defaults); bases={}; DELETED_IDS=[]; }
+      if(cache) { FINDINGS=cache.findings || []; SETTINGS=cache.settings || clone(defaults); DELETED_IDS=cache.deleted || []; bases=cache.bases || {}; syncedAt=cache.syncedAt || ''; }
+      else { FINDINGS=[]; SETTINGS=clone(defaults); bases={}; DELETED_IDS=[]; syncedAt=''; }
       await boot();
       started=true;
       // member() already verified access above; skip its redundant re-check on this first sync.
@@ -356,10 +370,13 @@
   }
   $('#logoutBtn').onclick=event=>{event.preventDefault();logout();};
   $('#cloudSignOut').onclick=logout;
-  $('#oneClickSyncBtn').onclick=()=>sync();
+  // Manual sync and reconnect are infrequent, explicit moments — do a full reconciliation then
+  // as a safety net against drift (e.g. a row an admin removed directly in SQL), while the
+  // silent 30s background poll stays incremental.
+  $('#oneClickSyncBtn').onclick=()=>sync(false,false,true);
   $('#cloudBackupBtn').onclick=()=>backupJson();
   $('#logClearOldBtn').closest('.field').remove();
-  window.addEventListener('online',()=>sync(true));
+  window.addEventListener('online',()=>sync(true,false,true));
   window.addEventListener('beforeunload',event=>{
     if(started && (pending().length || mediaPending || !durable)) {event.preventDefault();event.returnValue='';}
   });
