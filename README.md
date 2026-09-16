@@ -52,7 +52,7 @@ GitHub Pages chỉ host giao diện tĩnh. Supabase mới lưu dữ liệu, xác
 - Xung đột không tự chọn bên thắng: tải hai bản để đối chiếu, chọn bản máy chủ, sau đó nhập lại thay đổi cần giữ. Bản chờ không tự ghi đè máy chủ.
 - Ảnh nén lưu dạng data URL trong JSONB để báo cáo Excel/HTML và backup vẫn hoạt động. Tối đa 20 MB mỗi Finding. Đây là lựa chọn tương thích cho quy mô nội bộ, chưa tối ưu cho kho ảnh rất lớn; mỗi lượt đồng bộ đọc toàn bộ bản ghi theo trang 100.
 - Ảnh gốc mới được tải riêng vào bucket private `gmp-mediasave`, tối đa 20 MiB/file; có thông báo khi lỗi. Tải ảnh gốc không có hàng đợi bền vững qua lần đóng trang: nếu tải thất bại, giữ file gốc và chọn lại ảnh khi mạng ổn định. Gỡ ảnh trong Finding không xóa bản sao gốc.
-- Nhật ký do máy chủ tự ghi với danh tính xác thực, hiển thị 1.000 mục gần nhất. Dữ liệu máy chủ vẫn giữ nhật ký cũ. Dấu xoá giữ bản cũ trong database để tránh hồi sinh dữ liệu và hỗ trợ quản trị khôi phục.
+- Nhật ký do máy chủ tự ghi với danh tính xác thực, hiển thị 100 mục gần nhất. Máy chủ tự động xoá mục cũ hơn 7 ngày bằng tác vụ định kỳ (`pg_cron`, xem mục 6). Dấu xoá Finding vẫn giữ bản cũ trong database để tránh hồi sinh dữ liệu và hỗ trợ quản trị khôi phục — không liên quan đến nhật ký thao tác.
 - Đồng bộ thư mục, dọn file thiết bị cũ, mốc ngắt đồng bộ, tài khoản/mật khẩu local được thay thế trong bản web. Bản offline gốc giữ nguyên.
 - CSV vẫn xuất toàn bộ dữ liệu như bản gốc. Excel/HTML giữ các bộ lọc hiện có. Email chỉ tạo file .eml để người dùng tự kiểm tra/gửi trong Outlook.
 
@@ -100,6 +100,17 @@ npx supabase functions deploy admin-users
 3. **Kiểm tra Đổi vai trò:** Bấm `Nâng lên Admin` hoặc `Hạ xuống User` ở cột Thao tác, xác nhận hộp thoại để hoàn tất.
 4. **Kiểm tra Vô hiệu hóa:** Bấm `Vô hiệu hóa` để khóa tài khoản một nhân viên. Khi bị khóa, tài khoản đó không thể đăng nhập hoặc lưu dữ liệu; dữ liệu lịch sử và Audit Log vẫn được bảo toàn nguyên vẹn. Bấm `Kích hoạt` để mở khóa lại.
 5. **Kiểm tra tài khoản User thường:** Đăng nhập bằng tài khoản vừa tạo (role = `user`). Tab `👥 Quản lý người dùng` hoàn toàn bị ẩn; nếu cố tình gõ lệnh `switchTab('users')` từ Console, hệ thống sẽ cảnh báo và chặn lại ngay lập tức.
+
+## 6. Tự động xoá nhật ký thao tác cũ (Audit Log Retention)
+
+Nhật ký thao tác (`gmp_audit`) không có quyền xoá từ trình duyệt (RLS chỉ cho `select`), để không ai — kể cả Admin qua giao diện — chỉnh sửa được lịch sử thao tác. Việc dọn dữ liệu cũ chạy định kỳ trên máy chủ bằng `pg_cron`.
+
+Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260916_audit_retention.sql`, copy toàn bộ nội dung và bấm **Run**. Script này sẽ:
+- Tạo index trên cột `ts` để tăng tốc truy vấn/nhật ký.
+- Bật extension `pg_cron` (nếu chưa bật).
+- Lên lịch chạy hằng ngày lúc 03:00 UTC, xoá mọi mục nhật ký cũ hơn 7 ngày.
+
+Có thể kiểm tra job đã chạy tại SQL Editor bằng `select * from cron.job;` và `select * from cron.job_run_details order by start_time desc limit 20;`.
 
 ---
 

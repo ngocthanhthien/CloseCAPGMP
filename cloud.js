@@ -101,13 +101,15 @@
     return document.activeElement?.matches('input,textarea,select') ||
       $('#findingDetailModal').classList.contains('show') || EDITING_FINDINGS.size>0;
   }
-  async function sync(silent = false) {
+  async function sync(silent = false, skipMemberCheck = false) {
     if(!started || syncing) return;
     if(silent && editing()) { schedule(); return; }
     syncing = true;
     try {
       await saveChain;
-      await member(); // Check revocation / role changes before each synchronization.
+      // Check revocation / role changes before each synchronization, except right after
+      // start() already verified membership — avoids a redundant round-trip at login.
+      if(!skipMemberCheck) await member();
       status('Đang đồng bộ Supabase…');
       // Capture outbound values before network calls; keep later edits intact.
       for(const change of pending()) {
@@ -136,7 +138,7 @@
         } else { applyRow(row); bases[key]=clone(row); conflicts.delete(key); }
       }
       await persist();
-      const {data:logs,error:logError} = await client.from('gmp_audit').select('*').order('ts',{ascending:false}).limit(1000);
+      const {data:logs,error:logError} = await client.from('gmp_audit').select('*').order('ts',{ascending:false}).limit(100);
       if(logError) throw logError;
       LOG_ENTRIES = (logs || []).map(l=>({id:String(l.id),ts:Date.parse(l.ts),user:l.actor_name,
         userCode:l.actor_id,deviceId:l.device,action:l.action,detail:l.detail,area:l.area}));
@@ -238,15 +240,25 @@
       });
       if(!acquired) throw new Error('App đang mở ở tab khác. Đóng tab đó rồi tải lại trang này.');
       const cache=await idbGet('cloudWorkspace');
+      const hadCache=!!cache;
       if(cache) { FINDINGS=cache.findings || []; SETTINGS=cache.settings || clone(defaults); DELETED_IDS=cache.deleted || []; bases=cache.bases || {}; }
       else { FINDINGS=[]; SETTINGS=clone(defaults); bases={}; DELETED_IDS=[]; }
       await boot();
       started=true;
-      await sync();
-      if(!accessGranted) return;
-      // A failed initial network fetch may show only this authenticated user's own cache.
-      $('#appShell').hidden=false; $('#loginOverlay').style.display='none';
-      $('#loginPass').value=''; applyUserUI(); renderUsers();
+      // member() already verified access above; skip its redundant re-check on this first sync.
+      if(hadCache) {
+        // Cache exists: show it immediately and let the network sync refresh it in the background,
+        // instead of leaving the user on the login screen for the full round-trip.
+        $('#appShell').hidden=false; $('#loginOverlay').style.display='none';
+        $('#loginPass').value=''; applyUserUI(); renderUsers();
+        sync(false,true);
+      } else {
+        await sync(false,true);
+        if(!accessGranted) return;
+        // A failed initial network fetch may show only this authenticated user's own cache.
+        $('#appShell').hidden=false; $('#loginOverlay').style.display='none';
+        $('#loginPass').value=''; applyUserUI(); renderUsers();
+      }
       setInterval(()=>{ if(!document.hidden) sync(true); },30000);
     } catch(error) { releaseLock?.(); $('#loginErr').textContent=error.message; }
     finally { starting=false; }
