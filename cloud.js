@@ -327,16 +327,33 @@
   };
   const originalMail=renderMail;
   renderMail=()=>{ originalMail(); if(!CURRENT_USER?.admin) $$('[data-mailemail],[data-mailpic],#saveMailBtn').forEach(el=>el.disabled=true); };
+  // Chrome/Edge only show their "Save password?" prompt for SPA logins (no real page
+  // navigation on submit) when explicitly told via the Credential Management API.
+  // Firefox/Safari already offer to save on the native 'submit' event below, using the
+  // autocomplete="username"/"current-password" attributes already on the fields.
   $('#cloudLoginForm').addEventListener('submit',async event=>{
     event.preventDefault(); if(!client) return;
     $('#loginBtn').disabled=true; $('#loginErr').textContent='Đang đăng nhập…';
+    const email=$('#loginUser').value.trim(), password=$('#loginPass').value;
     try {
-      const {error}=await client.auth.signInWithPassword({email:$('#loginUser').value.trim(),password:$('#loginPass').value});
+      const {error}=await client.auth.signInWithPassword({email,password});
       if(error) throw error;
+      if(window.PasswordCredential) {
+        navigator.credentials.store(new PasswordCredential({id:email,password,name:email})).catch(()=>{});
+      }
       await start();
     } catch(error) { $('#loginErr').textContent=error.message; }
     finally { $('#loginBtn').disabled=false; }
   });
+  // Offer to auto-fill a credential the browser already remembers for this site, so a
+  // returning user on a trusted device only needs to press "Đăng nhập". Never auto-submits.
+  if(window.PasswordCredential && navigator.credentials) {
+    navigator.credentials.get({password:true,mediation:'optional'}).then(cred=>{
+      if(cred && cred.type==='password' && !$('#loginUser').value) {
+        $('#loginUser').value=cred.id; $('#loginPass').value=cred.password;
+      }
+    }).catch(()=>{});
+  }
   $('#logoutBtn').onclick=event=>{event.preventDefault();logout();};
   $('#cloudSignOut').onclick=logout;
   $('#oneClickSyncBtn').onclick=()=>sync();
