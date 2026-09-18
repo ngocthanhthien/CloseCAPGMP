@@ -491,6 +491,15 @@ table.data tr:hover td{background:#f7fbfa}
       <div class="row" style="margin-top:8px"><button class="btn sm gray" id="resetTabOrderBtn">↺ Khôi phục thứ tự mặc định</button></div>
     </div>
     <div class="card">
+      <h3 class="sec">🔐 Phân quyền Tab cho User</h3>
+      <div class="hint">Chỉ Admin thấy và chỉnh được mục này. Chọn những tab mà tài khoản <b>User thường</b> được phép thấy khi đăng nhập — <b>Admin luôn thấy đủ mọi tab</b>, không bị ảnh hưởng bởi mục này. Bấm "Bỏ giới hạn" để User lại thấy tất cả như mặc định (không cần chọn từng ô).</div>
+      <div id="userTabPermList" style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" id="saveUserTabPermBtn">💾 Lưu phân quyền</button>
+        <button class="btn sm gray" id="resetUserTabPermBtn">↺ Bỏ giới hạn (User thấy tất cả)</button>
+      </div>
+    </div>
+    <div class="card">
       <h3 class="sec">🧹 Dọn Finding trùng lặp</h3>
       <div class="hint">Chỉ Admin dùng được. Quét toàn bộ Finding hiện có, phát hiện các Finding trùng nội dung (cùng khu vực + ngày + mô tả) — thường phát sinh khi 2 người cùng ghi nhận độc lập trên 2 máy rồi mới đồng bộ — rồi gộp Action của các bản trùng lại thành 1 Finding duy nhất, xoá các bản dư. <b>Ngoài ra</b>: Finding nào hoàn toàn không có <b>Mô tả Finding (Issue)</b> — thường do tạo/nhân bản nhầm — sẽ được xoá thẳng luôn, không cần chờ tìm bản trùng.</div>
       <div class="row" style="margin-top:8px"><button class="btn sm gray" id="dedupFindingsBtn">🧹 Quét &amp; dọn Finding trùng / thiếu Mô tả</button></div>
@@ -736,6 +745,16 @@ function applyUserUI(){
   $("#userName").textContent = CURRENT_USER?.name || "";
   $$(".adminTab").forEach(el=>el.style.display=admin ? "" : "none");
   $$(".guestHideTab").forEach(el=>el.style.display=CURRENT_USER ? "" : "none");
+  // Phân quyền Tab cho User (Cài đặt → 🔐 Phân quyền Tab cho User, SETTINGS.userVisibleTabs) —
+  // CHỈ áp dụng cho tài khoản User thường; Admin luôn thấy đủ mọi tab bất kể cấu hình này. Đặt
+  // display rõ ràng ở cả 2 nhánh (không chỉ nhánh ẩn) để không bị kẹt trạng thái ẩn của lần đăng
+  // nhập User trước đó nếu chuyển sang tài khoản Admin trên cùng tab trình duyệt (không tải lại trang).
+  const userAllowedTabs = Array.isArray(SETTINGS.userVisibleTabs) ? SETTINGS.userVisibleTabs : null;
+  USER_TOGGLABLE_TABS.forEach(code=>{
+    const el = document.querySelector(`.tab[data-tab="${code}"]`);
+    if(!el) return;
+    el.style.display = (!admin && userAllowedTabs && !userAllowedTabs.includes(code)) ? "none" : "";
+  });
   applyTabOrder();
 }
 let USERS_CACHE = [];
@@ -1217,8 +1236,14 @@ const GUEST_TAB_ORDER = ["dash","list","action","ownerguide","add","sync","guide
 const TAB_LABELS = {
   dash:"🏠 Tổng quan", action:"🛠️ Đóng Gap (Owner)", ownerguide:"📘 Hướng dẫn Đóng Gap",
   add:"📝 Ghi nhận Finding", confirm:"✅ Xác nhận Gap (Admin)", list:"📋 Danh sách Finding",
-  mail:"✉️ Mail", sync:"🔄 Đồng bộ", settings:"⚙️ Cài đặt", users:"👥 Quản lý người dùng", guide:"📖 Hướng dẫn"
+  log:"🕒 Data Input Log", mail:"✉️ Mail", sync:"🔄 Đồng bộ", settings:"⚙️ Cài đặt",
+  users:"👥 Quản lý người dùng", guide:"📖 Hướng dẫn"
 };
+// Tab luôn ẩn với User thường bất kể cấu hình phân quyền bên dưới (đã có sẵn .adminTab riêng —
+// cho User thấy được các tab này không có ý nghĩa vì bản thân chức năng bên trong đã yêu cầu Admin).
+const ADMIN_ONLY_TABS = ["confirm","settings","users"];
+// Danh sách tab Admin có thể bật/tắt cho User thường xem trong mục Cài đặt → "Phân quyền Tab cho User".
+const USER_TOGGLABLE_TABS = DEFAULT_TAB_ORDER.filter(code=>!ADMIN_ONLY_TABS.includes(code));
 
 function newAction(over){
   return Object.assign({
@@ -3694,10 +3719,45 @@ async function resetTabOrder(){
   toast("↺ Đã khôi phục thứ tự tab mặc định");
 }
 
+// Phân quyền Tab cho User: SETTINGS.userVisibleTabs là mảng mã tab User thường được phép thấy.
+// null/không có = KHÔNG giới hạn (User thấy tất cả như hành vi mặc định trước đây) — giữ tương
+// thích ngược cho các máy/tài khoản chưa từng cấu hình mục này. Admin không bị ảnh hưởng bởi
+// danh sách này trong mọi trường hợp (áp dụng ở applyUserUI()).
+function renderUserTabPermissions(){
+  const el = $("#userTabPermList");
+  if(!el) return;
+  const allowed = Array.isArray(SETTINGS.userVisibleTabs) ? SETTINGS.userVisibleTabs : USER_TOGGLABLE_TABS;
+  el.innerHTML = USER_TOGGLABLE_TABS.map(code=>`
+    <label style="display:flex;align-items:center;gap:6px;padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg1);cursor:pointer">
+      <input type="checkbox" data-usertabperm="${code}" ${allowed.includes(code)?"checked":""}>
+      <span>${esc(TAB_LABELS[code]||code)}</span>
+    </label>`).join("");
+}
+async function saveUserTabPermissions(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)){ toast("⚠️ Chỉ Admin được đổi phân quyền tab"); return; }
+  const checked = $$("[data-usertabperm]").filter(cb=>cb.checked).map(cb=>cb.dataset.usertabperm);
+  SETTINGS.userVisibleTabs = checked;
+  SETTINGS.updatedAt = Date.now();
+  await saveSettings();
+  applyUserUI();
+  toast("✅ Đã lưu phân quyền tab cho User (" + checked.length + "/" + USER_TOGGLABLE_TABS.length + " tab được chọn)");
+}
+async function resetUserTabPermissions(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)){ toast("⚠️ Chỉ Admin được đổi phân quyền tab"); return; }
+  if(!confirm("Bỏ giới hạn — User thường sẽ thấy lại tất cả tab như mặc định?")) return;
+  SETTINGS.userVisibleTabs = null;
+  SETTINGS.updatedAt = Date.now();
+  await saveSettings();
+  renderUserTabPermissions();
+  applyUserUI();
+  toast("↺ Đã bỏ giới hạn phân quyền tab cho User");
+}
+
 function fullRerender(){
   renderDashboard(); renderAddRecent(); renderAction(); renderConfirm(); renderFindingList(); renderMail();
   applyTabOrder();
   renderTabOrderSettings();
+  renderUserTabPermissions();
   $("#setCompany").value = SETTINGS.company;
   $("#setTarget").value = SETTINGS.target;
 }
@@ -3769,6 +3829,8 @@ async function boot(){
     renderDashboard();
   });
   $("#resetTabOrderBtn").addEventListener("click", resetTabOrder);
+  $("#saveUserTabPermBtn").addEventListener("click", saveUserTabPermissions);
+  $("#resetUserTabPermBtn").addEventListener("click", resetUserTabPermissions);
   $("#dedupFindingsBtn").addEventListener("click", dedupFindingsNow);
   $("#purgeBlankActionsBtn").addEventListener("click", purgeBlankActionsNow);
   $("#purgeImgBtn").addEventListener("click", purgeOldClosedImages);
