@@ -118,6 +118,19 @@ Vòng đồng bộ nền mỗi 30 giây chỉ tải bản ghi có `updated_at` m
 
 Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260917_incremental_sync.sql`, copy toàn bộ nội dung và bấm **Run**. Script này tạo index trên cột `updated_at` của `gmp_records` để truy vấn tăng trưởng nhanh.
 
+## 8. Đăng nhập bằng Tên đăng nhập (không cần email cho User)
+
+Nhân viên đăng nhập bằng **Tên đăng nhập + mật khẩu**, không cần địa chỉ email. Admin vẫn đăng nhập bằng **Email + mật khẩu** như trước. Đây vẫn là tài khoản Supabase Auth thật với mật khẩu riêng — không phải "chọn tên không cần mật khẩu" — mỗi thao tác vẫn truy vết đúng người thật vì Supabase Auth chỉ hỗ trợ đăng nhập bằng email/số điện thoại, tài khoản Tên đăng nhập được lưu với một email nội bộ tự sinh (`<tên_đăng_nhập>@<mã-project>.users.internal`, không gửi thư, không ai nhìn thấy hay gõ giá trị này) — trình duyệt tự quy đổi Tên đăng nhập sang email nội bộ này trước khi gọi Supabase.
+
+**Cần làm:**
+1. Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260918_username_login.sql`, copy toàn bộ nội dung và bấm **Run**. Script này thêm cột `username` vào `gmp_members`.
+2. Triển khai lại Edge Function đã cập nhật:
+   ```bash
+   npx supabase functions deploy admin-users
+   ```
+3. Vào tab **👥 Quản lý người dùng → ➕ Thêm người dùng**: chọn vai trò **User** sẽ hiện ô **Tên đăng nhập** (chữ thường/số, có thể chứa `. _ -`, không dấu/khoảng trắng) thay cho Email; chọn vai trò **Admin** vẫn hiện ô **Email** như cũ.
+4. Tài khoản Admin/User đã tạo từ trước (bằng email) không bị ảnh hưởng, vẫn đăng nhập bằng email như cũ — script chỉ áp dụng cho tài khoản tạo mới bằng Tên đăng nhập.
+
 ---
 
 ## Kiểm tra trước bàn giao

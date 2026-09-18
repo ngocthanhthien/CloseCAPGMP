@@ -7,6 +7,16 @@
       ? Object.fromEntries(Object.keys(item).sort().map(k => [k, item[k]])) : item;
   });
   const same = (a, b) => stable(a) === stable(b);
+  // Supabase Auth only signs in by email/phone, so a Username account uses a synthetic,
+  // never-mailed address behind the scenes; the person only ever sees/types the username.
+  // Must compute the exact same address the admin-users Edge Function derives on creation.
+  function shadowDomain() {
+    try { return new URL(config.supabaseUrl).hostname.split('.')[0]+'.users.internal'; }
+    catch { return 'users.internal'; }
+  }
+  function loginIdToEmail(raw) {
+    return raw.includes('@') ? raw.toLowerCase() : raw.toLowerCase()+'@'+shadowDomain();
+  }
   const defaults = clone(SETTINGS);
   const areaDefaults = AREAS.map(a => ({code:a.code, pic:a.pic}));
   let client, started = false, starting = false, timer, bases = {}, conflicts = new Map(), accessGranted=false;
@@ -348,12 +358,15 @@
   $('#cloudLoginForm').addEventListener('submit',async event=>{
     event.preventDefault(); if(!client) return;
     $('#loginBtn').disabled=true; $('#loginErr').textContent='Đang đăng nhập…';
-    const email=$('#loginUser').value.trim(), password=$('#loginPass').value;
+    // Users type a plain username (no email); Admin can still type a real email. Both map
+    // to a Supabase Auth email — see loginIdToEmail(). The browser only ever remembers/shows
+    // what was actually typed (raw), never the synthetic address used for the API call.
+    const raw=$('#loginUser').value.trim(), password=$('#loginPass').value;
     try {
-      const {error}=await client.auth.signInWithPassword({email,password});
+      const {error}=await client.auth.signInWithPassword({email:loginIdToEmail(raw),password});
       if(error) throw error;
       if(window.PasswordCredential) {
-        navigator.credentials.store(new PasswordCredential({id:email,password,name:email})).catch(()=>{});
+        navigator.credentials.store(new PasswordCredential({id:raw,password,name:raw})).catch(()=>{});
       }
       await start();
     } catch(error) { $('#loginErr').textContent=error.message; }

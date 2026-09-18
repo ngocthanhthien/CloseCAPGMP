@@ -7,6 +7,17 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Supabase Auth only signs in by email/phone. A "username" account gets a synthetic,
+// never-mailed address so the person only ever sees/types their username. Must match the
+// same transform the client uses in cloud.js (both derive it from the same project URL).
+const USERNAME_RE = /^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/;
+function shadowDomain(supabaseUrl: string) {
+  return new URL(supabaseUrl).hostname.split(".")[0] + ".users.internal";
+}
+function usernameToEmail(username: string, supabaseUrl: string) {
+  return username + "@" + shadowDomain(supabaseUrl);
+}
+
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -96,7 +107,7 @@ serve(async (req: Request) => {
 
       const { data: members, error: listMemErr } = await adminClient
         .from("gmp_members")
-        .select("user_id, display_name, role, disabled");
+        .select("user_id, display_name, role, disabled, username");
       if (listMemErr) {
         throw new Error(`Không thể lấy danh sách gmp_members: ${listMemErr.message}`);
       }
@@ -116,7 +127,10 @@ serve(async (req: Request) => {
         userList.push({
           userId: uid,
           displayName: member?.display_name || authUser?.user_metadata?.display_name || authUser?.email?.split("@")[0] || "N/A",
-          email: authUser?.email || "(Không có email)",
+          // Username accounts sign in with a synthetic email the person never sees — show
+          // their username instead; only a real email (Admin accounts) is shown as email.
+          username: member?.username || null,
+          email: member?.username ? null : (authUser?.email || "(Không có email)"),
           role: member?.role || "user",
           status: isDisabled ? "Disabled" : "Active",
           hasMemberRecord: !!member,
@@ -137,12 +151,16 @@ serve(async (req: Request) => {
 
     // ACTION: create-user
     if (action === "create-user") {
-      const { displayName, email, password, role = "user" } = body;
+      const { displayName, email, username, password, role = "user" } = body;
 
       const trimmedName = String(displayName || "").trim();
+      const trimmedUsername = String(username || "").trim().toLowerCase();
       const trimmedEmail = String(email || "").trim().toLowerCase();
       const userPassword = String(password || "");
       const selectedRole = role === "admin" ? "admin" : "user";
+      // Username login (no email) for the common case; a real email stays available for
+      // Admin accounts, or anyone who explicitly needs to sign in with one.
+      const usingUsername = !trimmedEmail && !!trimmedUsername;
 
       if (!trimmedName) {
         return new Response(JSON.stringify({ error: "Họ và tên không được để trống." }), {
@@ -151,12 +169,23 @@ serve(async (req: Request) => {
         });
       }
 
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(trimmedEmail)) {
-        return new Response(JSON.stringify({ error: "Địa chỉ email không đúng định dạng." }), {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      let authEmail = trimmedEmail;
+      if (usingUsername) {
+        if (!USERNAME_RE.test(trimmedUsername)) {
+          return new Response(
+            JSON.stringify({ error: "Tên đăng nhập không hợp lệ: 2-32 ký tự, chữ thường/số, có thể chứa . _ -, không bắt đầu/kết thúc bằng ký tự đặc biệt." }),
+            { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        authEmail = usernameToEmail(trimmedUsername, supabaseUrl);
+      } else {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(trimmedEmail)) {
+          return new Response(JSON.stringify({ error: "Địa chỉ email không đúng định dạng." }), {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
       }
 
       if (userPassword.length < 6) {
@@ -168,17 +197,20 @@ serve(async (req: Request) => {
 
       // Tạo user trong Supabase Auth
       const { data: createdAuth, error: createAuthErr } = await adminClient.auth.admin.createUser({
-        email: trimmedEmail,
+        email: authEmail,
         password: userPassword,
         email_confirm: true,
         user_metadata: { display_name: trimmedName },
       });
 
       if (createAuthErr || !createdAuth?.user) {
-        return new Response(
-          JSON.stringify({ error: `Lỗi tạo tài khoản Auth: ${createAuthErr?.message || "Không xác định"}` }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        const msg = createAuthErr?.message || "Không xác định";
+        const friendly = /already.*registered|already.*exists/i.test(msg)
+          ? (usingUsername ? "Tên đăng nhập đã được sử dụng." : "Email đã được sử dụng.")
+          : `Lỗi tạo tài khoản Auth: ${msg}`;
+        return new Response(JSON.stringify({ error: friendly }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       const newUserId = createdAuth.user.id;
@@ -189,15 +221,18 @@ serve(async (req: Request) => {
         display_name: trimmedName,
         role: selectedRole,
         disabled: false,
+        username: usingUsername ? trimmedUsername : null,
       });
 
       // Rollback nếu chèn gmp_members thất bại để tránh tài khoản mồ côi
       if (insertMemberErr) {
         await adminClient.auth.admin.deleteUser(newUserId);
-        return new Response(
-          JSON.stringify({ error: `Lỗi phân quyền gmp_members: ${insertMemberErr.message}. Đã hủy tạo tài khoản Auth.` }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        const friendly = /duplicate|unique/i.test(insertMemberErr.message)
+          ? "Tên đăng nhập đã được sử dụng."
+          : `Lỗi phân quyền gmp_members: ${insertMemberErr.message}. Đã hủy tạo tài khoản Auth.`;
+        return new Response(JSON.stringify({ error: friendly }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
 
       // Ghi audit log
@@ -206,7 +241,7 @@ serve(async (req: Request) => {
         actor_name: callerMember.display_name,
         device: "Edge Function",
         action: "USER_CREATED",
-        detail: `Tạo người dùng ${trimmedName} (${trimmedEmail}), vai trò: ${selectedRole}`,
+        detail: `Tạo người dùng ${trimmedName} (${usingUsername ? "@" + trimmedUsername : trimmedEmail}), vai trò: ${selectedRole}`,
         area: "User Management",
       });
 
@@ -216,7 +251,8 @@ serve(async (req: Request) => {
           user: {
             userId: newUserId,
             displayName: trimmedName,
-            email: trimmedEmail,
+            email: usingUsername ? null : authEmail,
+            username: usingUsername ? trimmedUsername : null,
             role: selectedRole,
             status: "Active",
           },

@@ -552,7 +552,7 @@ table.data tr:hover td{background:#f7fbfa}
           <thead>
             <tr style="border-bottom:2px solid var(--line);background:var(--bg1)">
               <th style="padding:10px 12px">Họ và tên</th>
-              <th style="padding:10px 12px">Email</th>
+              <th style="padding:10px 12px">Đăng nhập</th>
               <th style="padding:10px 12px;width:120px">Vai trò</th>
               <th style="padding:10px 12px;width:130px">Trạng thái</th>
               <th style="padding:10px 12px;width:170px;text-align:right">Thao tác</th>
@@ -571,7 +571,7 @@ table.data tr:hover td{background:#f7fbfa}
   <!-- ===================== GUIDE ===================== -->
   <div class="view" id="view-guide"><div class="card">
   <h2>📖 Hướng dẫn bản web</h2>
-  <p>Đăng nhập bằng email và mật khẩu Supabase được quản trị viên cấp. Tài khoản phải có trong danh sách thành viên được duyệt.</p>
+  <p>Nhân viên đăng nhập bằng Tên đăng nhập + mật khẩu do Admin cấp (không cần email). Admin đăng nhập bằng Email + mật khẩu. Tài khoản phải có trong danh sách thành viên được duyệt.</p>
   <p>Ghi nhận Finding → thêm tối đa một Action → bổ sung PIC, hạn xử lý và ảnh → gửi xác nhận. Admin/QA duyệt, từ chối hoặc mở lại Finding.</p>
   <p>Thanh trạng thái cho biết thay đổi đã lên Supabase hay còn chờ gửi. Nếu có xung đột, tải bản sao lưu để đối chiếu trước khi chọn bản trên máy chủ.</p>
   <p>Dữ liệu cũ trong file HTML không tự chuyển lên web. Admin xuất JSON từ app cũ, rồi nhập tại Cài đặt. Tài khoản và mật khẩu cũ không được nhập.</p>
@@ -585,7 +585,7 @@ table.data tr:hover td{background:#f7fbfa}
   <form class="loginbox" id="cloudLoginForm">
     <div style="font-size:36px">🧭</div><h2>GMP Close Gap</h2>
     <p>Đăng nhập tài khoản được cấp để truy cập dữ liệu GMP.</p>
-    <label for="loginUser">Email</label><input id="loginUser" type="email" required autocomplete="username" placeholder="email@congty.com">
+    <label for="loginUser">Tên đăng nhập</label><input id="loginUser" type="text" required autocomplete="username" placeholder="Tên đăng nhập (Admin dùng email)">
     <label for="loginPass">Mật khẩu</label><input id="loginPass" type="password" required autocomplete="current-password">
     <button class="btn" id="loginBtn" style="width:100%;margin-top:14px">Đăng nhập</button>
     <p id="loginErr" role="alert" style="color:var(--red)"></p>
@@ -626,20 +626,25 @@ table.data tr:hover td{background:#f7fbfa}
         <input id="userAddName" type="text" required placeholder="Ví dụ: Nguyễn Văn A">
       </div>
       <div class="field" style="margin-bottom:10px">
-        <label for="userAddEmail">Email đăng nhập <span class="reqstar">*</span></label>
-        <input id="userAddEmail" type="email" required placeholder="user@ildcoffee.com">
-      </div>
-      <div class="field" style="margin-bottom:10px">
-        <label for="userAddPass">Mật khẩu ban đầu <span class="reqstar">*</span></label>
-        <input id="userAddPass" type="password" minlength="6" required placeholder="Tối thiểu 6 ký tự">
-        <div class="hint" style="margin:2px 0 0">Mật khẩu tối thiểu 6 ký tự. Người dùng dùng email và mật khẩu này để đăng nhập.</div>
-      </div>
-      <div class="field" style="margin-bottom:14px">
         <label for="userAddRole">Vai trò <span class="reqstar">*</span></label>
         <select id="userAddRole">
           <option value="user" selected>User (Nhân viên)</option>
           <option value="admin">Admin (Quản trị viên / QA)</option>
         </select>
+      </div>
+      <div class="field" style="margin-bottom:10px" id="userAddUsernameField">
+        <label for="userAddUsername">Tên đăng nhập <span class="reqstar">*</span></label>
+        <input id="userAddUsername" type="text" placeholder="vd: nguyenvana" autocomplete="off">
+        <div class="hint" style="margin:2px 0 0">Chữ thường/số, có thể có . _ -, không dấu/khoảng trắng. Nhân viên đăng nhập bằng tên này, không cần email.</div>
+      </div>
+      <div class="field" style="margin-bottom:10px;display:none" id="userAddEmailField">
+        <label for="userAddEmail">Email đăng nhập <span class="reqstar">*</span></label>
+        <input id="userAddEmail" type="email" placeholder="admin@congty.com">
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label for="userAddPass">Mật khẩu ban đầu <span class="reqstar">*</span></label>
+        <input id="userAddPass" type="password" minlength="6" required placeholder="Tối thiểu 6 ký tự">
+        <div class="hint" style="margin:2px 0 0">Mật khẩu tối thiểu 6 ký tự.</div>
       </div>
       <div id="userAddErr" role="alert" style="color:var(--red);font-size:13px;margin-bottom:10px;display:none"></div>
       <div class="modalActions">
@@ -810,7 +815,7 @@ function renderUserTable(){
         <td style="padding:10px 12px;font-weight:600">
           ${esc(u.displayName)} ${isCaller ? '<span style="font-size:11px;color:var(--muted)">(Bạn)</span>' : ''}
         </td>
-        <td style="padding:10px 12px;color:var(--muted)">${esc(u.email)}</td>
+        <td style="padding:10px 12px;color:var(--muted)">${u.username ? "@"+esc(u.username) : esc(u.email)}</td>
         <td style="padding:10px 12px">${roleBadge}</td>
         <td style="padding:10px 12px">${statusBadge}</td>
         <td style="padding:10px 12px;text-align:right">
@@ -863,11 +868,17 @@ async function handleUserToggleStatus(userId, currentlyActive){
   }
 }
 
+function applyUserAddRoleUI(){
+  const isAdmin = $("#userAddRole").value === "admin";
+  $("#userAddUsernameField").style.display = isAdmin ? "none" : "";
+  $("#userAddEmailField").style.display = isAdmin ? "" : "none";
+}
 function openUserAddModal(){
   $("#userAddForm").reset();
   const errBox = $("#userAddErr");
   if(errBox){ errBox.style.display = "none"; errBox.textContent = ""; }
   $("#userAddRole").value = "user";
+  applyUserAddRoleUI();
   $("#userAddModal").classList.add("show");
   $("#userAddName").focus();
 }
@@ -3780,6 +3791,7 @@ async function boot(){
   $("#userOpenAddModalBtn")?.addEventListener("click", openUserAddModal);
   $("#userAddCloseBtn")?.addEventListener("click", closeUserAddModal);
   $("#userAddCancelBtn")?.addEventListener("click", closeUserAddModal);
+  $("#userAddRole")?.addEventListener("change", applyUserAddRoleUI);
   $("#userAddForm")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = $("#userAddSubmitBtn");
@@ -3788,16 +3800,23 @@ async function boot(){
     if(btn){ btn.disabled = true; btn.textContent = "Đang tạo…"; }
 
     const displayName = $("#userAddName").value.trim();
+    const role = $("#userAddRole").value;
+    const isAdmin = role === "admin";
+    const username = $("#userAddUsername").value.trim().toLowerCase();
     const email = $("#userAddEmail").value.trim();
     const password = $("#userAddPass").value;
-    const role = $("#userAddRole").value;
 
     try {
       if(!displayName) throw new Error("Họ và tên không được để trống.");
-      if(!email) throw new Error("Email không được để trống.");
+      if(isAdmin){
+        if(!email) throw new Error("Email không được để trống.");
+      } else {
+        if(!username) throw new Error("Tên đăng nhập không được để trống.");
+        if(!/^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/.test(username)) throw new Error("Tên đăng nhập không hợp lệ: chữ thường/số, có thể có . _ -, không dấu/khoảng trắng.");
+      }
       if(password.length < 6) throw new Error("Mật khẩu phải từ 6 ký tự trở lên.");
 
-      await window.GMPCloud.adminCreateUser({ displayName, email, password, role });
+      await window.GMPCloud.adminCreateUser(isAdmin ? { displayName, email, password, role } : { displayName, username, password, role });
       closeUserAddModal();
       toast("✅ Đã tạo tài khoản người dùng thành công!");
       await fetchAndRenderUsers();
