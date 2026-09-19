@@ -26,6 +26,10 @@
   // embedded images) every 30 seconds.
   let syncedAt = '';
   let releaseLock;
+  // Throttle for the 'online' listener below — a flaky connection (wifi hiccup, laptop sleep/
+  // wake) can fire several 'online' events in quick succession; without this each one would
+  // re-trigger a sync, and a single genuine drop is more likely than several in a row anyway.
+  let lastOnlineSync = 0;
   const config = window.GMP_CONFIG || {};
   const api = window.GMPCloud = {
     cacheId:'', schedule, backupMedia,
@@ -148,8 +152,9 @@
         await persist();
       }
       // Routine polling only needs records changed since the last successful sync — re-reading
-      // every record (and its embedded images) every 30 seconds doesn't scale. A manual sync,
-      // reconnect, or first-ever login on this device still does a full reconciliation.
+      // every record (and its embedded images) every 60 seconds doesn't scale, and neither does
+      // doing that on every network reconnect. Only an explicit manual sync or first-ever login
+      // on this device does a full reconciliation (forceFull=true).
       const rows = await changedRows(forceFull ? '' : syncedAt);
       for(const row of rows) {
         const key = row.kind+':'+row.id;
@@ -162,10 +167,17 @@
       }
       syncedAt = watermark;
       await persist();
-      const {data:logs,error:logError} = await client.from('gmp_audit').select('*').order('ts',{ascending:false}).limit(100);
-      if(logError) throw logError;
-      LOG_ENTRIES = (logs || []).map(l=>({id:String(l.id),ts:Date.parse(l.ts),user:l.actor_name,
-        userCode:l.actor_id,deviceId:l.device,action:l.action,detail:l.detail,area:l.area}));
+      // Re-reading 100 audit rows on every silent 30s poll (whether or not anyone is looking)
+      // was the single largest source of egress here — trim the page size and only pull it on
+      // an explicit sync (manual button, first login) or while the Data Input Log tab is the one
+      // actually open; the periodic background poll otherwise leaves LOG_ENTRIES as-is.
+      const logTabOpen = document.querySelector('.tab.active')?.dataset.tab==='log';
+      if(!silent || logTabOpen) {
+        const {data:logs,error:logError} = await client.from('gmp_audit').select('*').order('ts',{ascending:false}).limit(20);
+        if(logError) throw logError;
+        LOG_ENTRIES = (logs || []).map(l=>({id:String(l.id),ts:Date.parse(l.ts),user:l.actor_name,
+          userCode:l.actor_id,deviceId:l.device,action:l.action,detail:l.detail,area:l.area}));
+      }
       if(!editing()) { fullRerender(); renderDataLog(); fillOwnerDatalist(); }
       renderConflicts();
       const count = pending().length;
@@ -283,7 +295,9 @@
         $('#appShell').hidden=false; $('#loginOverlay').style.display='none';
         $('#loginPass').value=''; applyUserUI(); renderUsers();
       }
-      setInterval(()=>{ if(!document.hidden) sync(true); },30000);
+      // 60s (was 30s) — halves routine background egress; the manual "Đồng bộ" button still
+      // gets fresh data immediately whenever someone actually needs it right now.
+      setInterval(()=>{ if(!document.hidden) sync(true); },60000);
     } catch(error) { releaseLock?.(); $('#loginErr').textContent=error.message; }
     finally { starting=false; }
   }
@@ -383,13 +397,20 @@
   }
   $('#logoutBtn').onclick=event=>{event.preventDefault();logout();};
   $('#cloudSignOut').onclick=logout;
-  // Manual sync and reconnect are infrequent, explicit moments — do a full reconciliation then
-  // as a safety net against drift (e.g. a row an admin removed directly in SQL), while the
-  // silent 30s background poll stays incremental.
+  // Manual sync is an infrequent, explicit moment — do a full reconciliation then as a safety
+  // net against drift (e.g. a row an admin removed directly in SQL), while the silent background
+  // poll AND a network reconnect both stay incremental (a reconnect is common enough — wifi
+  // hiccups, laptop sleep/wake — that re-downloading every embedded image each time was a real
+  // egress cost; syncedAt already covers genuine drift on the next full sync anyway).
   $('#oneClickSyncBtn').onclick=()=>sync(false,false,true);
   $('#cloudBackupBtn').onclick=()=>backupJson();
   $('#logClearOldBtn').closest('.field').remove();
-  window.addEventListener('online',()=>sync(true,false,true));
+  window.addEventListener('online',()=>{
+    const now=Date.now();
+    if(now-lastOnlineSync<60000) return;
+    lastOnlineSync=now;
+    sync(true);
+  });
   window.addEventListener('beforeunload',event=>{
     if(started && (pending().length || mediaPending || !durable)) {event.preventDefault();event.returnValue='';}
   });
