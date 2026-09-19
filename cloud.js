@@ -108,7 +108,9 @@
     // correct across pages exactly like the old full-table version did.
     let last = '';
     for(;;) {
-      let query = client.from('gmp_records').select('*').order('record_key').limit(100);
+      // Explicit column list (same set '*' would return today) so a future heavy column added
+      // to this table doesn't silently start riding along on every poll.
+      let query = client.from('gmp_records').select('kind,id,record_key,data,revision,deleted,updated_at').order('record_key').limit(100);
       if(since) query = query.gt('updated_at',since);
       if(last) query = query.gt('record_key',last);
       const {data,error} = await query;
@@ -238,7 +240,13 @@
   async function adminSetStatus(userId, disabled) { return adminInvoke(disabled ? 'disable-user' : 'enable-user', { targetUserId: userId }); }
 
   async function member() {
-    const {data:{user},error:authError}=await client.auth.getUser();
+    // getSession() reads the already-verified session from local storage (no network round-trip);
+    // getUser() would re-verify the JWT with the Auth server every single call. This runs on
+    // every sync() — the 60s poll, every debounced save, manual sync, reconnect — so that round-
+    // trip was pure overhead: the line right below already re-checks disabled/role against the
+    // server on every call, which is the actual revocation check that matters here.
+    const {data:{session},error:authError}=await client.auth.getSession();
+    const user=session?.user;
     if(authError || !user) { lock('Phiên đăng nhập đã hết hạn. Hãy tải lại trang và đăng nhập.'); throw authError || new Error('Chưa đăng nhập'); }
     if(api.cacheId && !api.cacheId.endsWith('_'+user.id)) {
       lock('Tài khoản đã thay đổi. Tải lại trang để mở dữ liệu đúng tài khoản.');
