@@ -643,8 +643,8 @@ table.data tr:hover td{background:#f7fbfa}
       </div>
       <div class="field" style="margin-bottom:10px" id="userAddUsernameField">
         <label for="userAddUsername">Tên đăng nhập <span class="reqstar">*</span></label>
-        <input id="userAddUsername" type="text" placeholder="vd: nguyenvana" autocomplete="off">
-        <div class="hint" style="margin:2px 0 0">Chữ thường/số, có thể có . _ -, không dấu/khoảng trắng. Nhân viên đăng nhập bằng tên này, không cần email.</div>
+        <input id="userAddUsername" type="text" placeholder="vd: nguyenvana (hoặc dán nguyên email nếu tài khoản này đã quen dùng email)" autocomplete="off">
+        <div class="hint" style="margin:2px 0 0">Bình thường: chữ thường/số, có thể có . _ -, không dấu/khoảng trắng — nhân viên đăng nhập bằng tên này, không cần email. Nếu dán vào 1 địa chỉ email (có @) thì tài khoản này sẽ đăng nhập bằng chính email đó thay vì Tên đăng nhập.</div>
       </div>
       <div class="field" style="margin-bottom:10px;display:none" id="userAddEmailField">
         <label for="userAddEmail">Email đăng nhập <span class="reqstar">*</span></label>
@@ -3868,17 +3868,28 @@ async function boot(){
     const email = $("#userAddEmail").value.trim();
     const password = $("#userAddPass").value;
 
+    // Vai trò User bình thường dùng "Tên đăng nhập" (không cần email) — nhưng nếu ô đó chứa "@"
+    // (ví dụ Admin dán lại nguyên email của 1 tài khoản nhân viên đã quen dùng từ trước, không
+    // muốn đổi), coi luôn là email thật và tạo tài khoản đăng nhập bằng email đó, vẫn giữ vai trò
+    // User — Edge Function admin-users vốn đã tách "dùng username hay email" độc lập với "vai
+    // trò", chỉ có form này trước đây mặc định luôn username cho User nên chưa cho nhập email.
+    const userWantsEmailLogin = !isAdmin && username.includes("@");
     try {
       if(!displayName) throw new Error("Họ và tên không được để trống.");
-      if(isAdmin){
-        if(!email) throw new Error("Email không được để trống.");
+      if(isAdmin || userWantsEmailLogin){
+        const emailValue = isAdmin ? email : username;
+        if(!emailValue) throw new Error("Email không được để trống.");
+        if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailValue)) throw new Error("Địa chỉ email không đúng định dạng.");
       } else {
         if(!username) throw new Error("Tên đăng nhập không được để trống.");
-        if(!/^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/.test(username)) throw new Error("Tên đăng nhập không hợp lệ: chữ thường/số, có thể có . _ -, không dấu/khoảng trắng.");
+        if(!/^[a-z0-9](?:[a-z0-9._-]{0,30}[a-z0-9])?$/.test(username)) throw new Error("Tên đăng nhập không hợp lệ: chữ thường/số, có thể có . _ -, không dấu/khoảng trắng (hoặc dán nguyên 1 địa chỉ email nếu muốn đăng nhập bằng email).");
       }
       if(password.length < 6) throw new Error("Mật khẩu phải từ 6 ký tự trở lên.");
 
-      await window.GMPCloud.adminCreateUser(isAdmin ? { displayName, email, password, role } : { displayName, username, password, role });
+      const payload = (isAdmin || userWantsEmailLogin)
+        ? { displayName, email: isAdmin ? email : username, password, role }
+        : { displayName, username, password, role };
+      await window.GMPCloud.adminCreateUser(payload);
       closeUserAddModal();
       toast("✅ Đã tạo tài khoản người dùng thành công!");
       await fetchAndRenderUsers();
