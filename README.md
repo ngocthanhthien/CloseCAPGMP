@@ -87,7 +87,7 @@ Hệ thống sử dụng một Supabase Edge Function có tên `admin-users` (đ
 npx supabase login
 
 # 2. Liên kết với project của bạn (thay mã project của bạn từ URL Supabase Dashboard)
-npx supabase link --project-ref somfruwvvnnyyqwrxozh
+npx supabase link --project-ref ftxibcrwknqgazechmqc
 
 # 3. Triển khai Edge Function
 npx supabase functions deploy admin-users
