@@ -4,9 +4,11 @@ Bàn giao để tiếp tục chỉnh sửa bằng công cụ AI khác. Đọc fi
 
 ## 1. Trạng thái dự án hiện tại
 
-- **Đã có project Supabase thật**, đã `supabase link` (project ref `qrodjneqbfvgfisjvzwp`, xem `supabase/.temp/project-ref`), `config.js` đã điền Project URL + publishable key thật (không phải placeholder).
+- **2026-09-20: đã CHUYỂN sang project Supabase mới** (project ref `somfruwvvnnyyqwrxozh`, thay cho project cũ `qrodjneqbfvgfisjvzwp`). `config.js` đã điền URL + publishable key của project mới. `supabase/.temp/*` (kể cả `project-ref`) trong repo vẫn còn trỏ project CŨ vì phiên AI không có quyền chạy `supabase login`/`link` (cần trình duyệt) — **người dùng cần tự chạy `npx supabase link --project-ref somfruwvvnnyyqwrxozh` trên máy họ** để các file `.temp` này (có tracked trong git) khớp với project đang dùng thật, trước khi deploy lại Edge Function.
+- **Project mới cần thiết lập từ đầu**: chạy `schema.sql` rồi 3 migration `20260916`/`20260917`/`20260918` (bỏ qua `20260915` — nội dung đã nằm sẵn trong `schema.sql`), tạo lại Admin đầu tiên, deploy lại Edge Function `admin-users`, phục hồi dữ liệu Finding/Settings từ file backup JSON (tài khoản/mật khẩu KHÔNG tự chuyển qua, phải tạo lại thủ công). Xem hướng dẫn đầy đủ README.md mục 1, 5, 8.
 - **Đã có GitHub repo**: `origin` trỏ tới `https://github.com/ngocthanhthien/CloseCAPGMP.git`, nhánh `main` đang track `origin/main`.
-- **Chưa xác minh được** (không có quyền truy cập Supabase Dashboard từ phiên làm việc AI): migration nào trong `supabase/migrations/` đã thực sự chạy trên project thật, Edge Function `admin-users` bản mới nhất đã deploy chưa. **Việc đầu tiên nên làm khi tiếp tục: vào Supabase Dashboard → SQL Editor, chạy `select * from supabase_migrations.schema_migrations;` (nếu có) hoặc đối chiếu thủ công từng cột/hàm được liệt kê ở mục 2 để biết đã áp dụng tới migration nào.**
+- **Chưa xác minh được** (không có quyền truy cập Supabase Dashboard từ phiên làm việc AI): trên project MỚI, migration nào đã thực sự chạy, Edge Function `admin-users` đã deploy chưa. Việc đầu tiên nên làm khi tiếp tục: vào Supabase Dashboard của project mới → SQL Editor, đối chiếu thủ công từng cột/hàm được liệt kê ở mục 2 để biết đã áp dụng tới migration nào.
+- **Nợ tài liệu**: mục 2 bên dưới (lịch sử thay đổi) dừng ở phiên 09-18 — các phiên sau đó (tối ưu Egress: audit log giới hạn 20 dòng + tải theo nhu cầu, `member()` dùng `getSession()` thay `getUser()`, poll 60s, bỏ full-reload khi mạng nối lại; thêm phân quyền Tab cho User ở Cài đặt) **chưa được ghi lại ở đây** — cần đọc trực tiếp `git log`/diff để biết chi tiết nếu cần.
 
 ## 2. Lịch sử thay đổi theo phiên làm việc (mới nhất trước)
 
