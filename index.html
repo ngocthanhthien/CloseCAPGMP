@@ -181,7 +181,7 @@ table.data tr:hover td{background:#f7fbfa}
   <div class="datechip" id="todayChip">—</div>
 </div>
 <div id="syncPermWarnBanner" style="display:none;background:#fff3cd;color:#7a5b00;border-bottom:2px solid #f0c419;padding:8px 16px;font-size:12.5px;font-weight:700;text-align:center;cursor:pointer" title="Bấm để đồng bộ lại và cấp lại quyền truy cập thư mục"></div>
-<div id="cloudBanner" role="status" aria-live="polite">Đang kết nối Supabase…</div>
+<div id="cloudBanner" role="status" aria-live="polite"><span id="cloudBannerText">Đang kết nối Supabase…</span><span id="cloudTrafficBadge" style="margin-left:10px;font-weight:700"></span></div>
 <div class="tabs" id="tabsBar">
   <div class="tab active" data-tab="dash">🏠 Tổng quan</div>
   <div class="tab" data-tab="action">🛠️ Đóng Gap (Owner)<span class="tabBadge" id="badgeAction" style="display:none"></span></div>
@@ -498,6 +498,31 @@ table.data tr:hover td{background:#f7fbfa}
         <button class="btn sm" id="saveUserTabPermBtn">💾 Lưu phân quyền</button>
         <button class="btn sm gray" id="resetUserTabPermBtn">↺ Bỏ giới hạn (User thấy tất cả)</button>
       </div>
+    </div>
+    <div class="card">
+      <h3 class="sec">🛡️ Data &amp; Egress Control</h3>
+      <div class="hint">Chỉ Admin thấy và chỉnh được mục này. Ước tính lưu lượng Supabase app tạo ra mỗi ngày và tự giảm tải khi gần/vượt hạn mức — <b>không bao giờ khoá việc ghi nhận Finding/Action</b>, chỉ tạm hoãn ảnh gốc, đồng bộ nền và Data Input Log khi cần.</div>
+      <div class="row" style="margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:600"><input type="checkbox" id="egressEnabled"> Egress Protection</label>
+        <span id="egressStateBadge" style="font-weight:700"></span>
+      </div>
+      <div style="margin-top:10px">
+        <div class="hint" id="egressTrafficLabel" style="margin-bottom:4px">Today's estimated traffic: — / — MB</div>
+        <div style="background:var(--bg1);border:1px solid var(--line2);border-radius:8px;height:14px;overflow:hidden">
+          <div id="egressTrafficBar" style="height:100%;width:0%;background:#0b5e52;transition:width .3s"></div>
+        </div>
+      </div>
+      <div class="setgrid" style="margin-top:12px">
+        <div class="field"><label>Soft Daily Limit (MB)</label><input type="number" id="egressSoft" min="1"></div>
+        <div class="field"><label>Hard Daily Limit (MB)</label><input type="number" id="egressHard" min="1"></div>
+      </div>
+      <div class="hint" style="margin-top:6px">Effective Hard Limit hôm nay: <b id="egressEffectiveHard">—</b> MB · Ảnh gốc đang chờ tải: <b id="egressPendingMedia">0</b></div>
+      <div class="row" style="margin-top:10px;align-items:flex-end;flex-wrap:wrap;gap:10px">
+        <div class="field" style="max-width:140px;margin:0"><label>Extra MB hôm nay</label><input type="number" id="egressExtraInput" min="1" value="50"></div>
+        <button class="btn sm gray" id="egressExtraBtn">+ Extra MB Today</button>
+        <button class="btn sm gray" id="egressUnlockBtn">🔓 Unlock Today</button>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="egressSaveBtn">💾 Save Settings</button></div>
     </div>
     <div class="card">
       <h3 class="sec">🧹 Dọn Finding trùng lặp</h3>
@@ -933,11 +958,12 @@ function fmtDateTime(ts){
   return dd+"/"+mm+"/"+yyyy+" "+hh+":"+mi;
 }
 
-function compressImageFile(file, maxW, quality){
+function compressImageFile(file, maxW, quality, meta){
   maxW = maxW || 900; quality = quality || 0.68;
-  // Backup bản gốc vào thư mục "Mediasave" chạy song song, không chờ/không chặn việc nén ảnh chính
-  // (xem backupMediaFile — định nghĩa ở phần ĐỒNG BỘ, dùng chung syncDirHandle đã kết nối).
-  backupMediaFile(file);
+  // Backup bản gốc lên Supabase Storage chạy song song, không chờ/không chặn việc nén ảnh chính
+  // (xem backupMediaFile). meta ({findingId,actionId,mediaType}) chỉ dùng để gắn nhãn ảnh gốc
+  // nếu bị xếp hàng chờ do Data & Egress Control (Protection) — không ảnh hưởng việc nén/lưu.
+  backupMediaFile(file, meta);
   return new Promise((resolve,reject)=>{
     const reader = new FileReader();
     reader.onload = function(e){
@@ -1129,7 +1155,7 @@ document.addEventListener("click", async e=>{
 document.addEventListener("change", async e=>{
   const inp = e.target.closest("[data-fimginput]");
   if(inp && inp.files && inp.files[0]){
-    EDIT_FINDING_PENDING_IMG[inp.dataset.fimginput] = await compressImageFile(inp.files[0]);
+    EDIT_FINDING_PENDING_IMG[inp.dataset.fimginput] = await compressImageFile(inp.files[0], null, null, {findingId:inp.dataset.fimginput, mediaType:"finding"});
     refreshAllFindingViews();
   }
 });
@@ -1152,7 +1178,7 @@ function wireFindingImgDropzone(containerSel){
     e.preventDefault(); zone.classList.remove("dragover");
     const f = extractImageFile(e.dataTransfer);
     if(!f){ toast("⚠️ Vui lòng kéo-thả 1 file ảnh (jpg/png)"); return; }
-    EDIT_FINDING_PENDING_IMG[zone.dataset.fimgwrap] = await compressImageFile(f);
+    EDIT_FINDING_PENDING_IMG[zone.dataset.fimgwrap] = await compressImageFile(f, null, null, {findingId:zone.dataset.fimgwrap, mediaType:"finding"});
     refreshAllFindingViews();
   });
   list.addEventListener("paste", async e=>{
@@ -1162,7 +1188,7 @@ function wireFindingImgDropzone(containerSel){
     const f = extractImageFile(e.clipboardData);
     if(!f) return;
     e.preventDefault();
-    EDIT_FINDING_PENDING_IMG[zone.dataset.fimgwrap] = await compressImageFile(f);
+    EDIT_FINDING_PENDING_IMG[zone.dataset.fimgwrap] = await compressImageFile(f, null, null, {findingId:zone.dataset.fimgwrap, mediaType:"finding"});
     refreshAllFindingViews();
   });
 }
@@ -1227,7 +1253,10 @@ async function idbGet(key){
 let FINDINGS = [];
 let DELETED_IDS = []; // tombstones {id, deletedAt} — ngăn Finding đã xoá bị đồng bộ phục hồi lại
 let DELETED_ACTION_IDS = []; // tombstones {id, deletedAt} — ngăn Action đã xoá bị đồng bộ phục hồi lại
-let SETTINGS = { company:"ILD Coffee Vietnam", target: 75, areaEmails: {}, areaPics: {}, tabOrder: [] };
+let SETTINGS = { company:"ILD Coffee Vietnam", target: 75, areaEmails: {}, areaPics: {}, tabOrder: [],
+  // Data & Egress Control — synced like any other Settings field (admin-only write, already
+  // enforced server-side by gmp_save_record for p_kind='settings'). See cloud.js trafficState().
+  egressControl: { enabled:true, softLimitMB:100, hardLimitMB:200, extraTodayMB:0, extraDate:"", unlockToday:false, unlockDate:"" } };
 const DEFAULT_TAB_ORDER = ["dash","action","ownerguide","add","confirm","list","log","mail","sync","settings","users","guide"];
 // Thứ tự + danh sách tab MẶC ĐỊNH khi CHƯA đăng nhập (khách) — cố định, không qua "Thứ tự Tab" của
 // Admin (cái đó chỉ áp dụng khi đã đăng nhập). Tab nào không có trong danh sách này bị ẩn với khách
@@ -1571,6 +1600,77 @@ function applyAreaPicOverrides(){
 async function saveSettings(){ const ok = await idbSet("settings", SETTINGS); if(!syncing) maybeAutoSync(); return ok; }
 
 /* ============================================================
+   DATA & EGRESS CONTROL — Cài đặt → 🛡️ Data & Egress Control.
+   Soft/Hard/Extra/Unlock sống trong SETTINGS.egressControl, đồng bộ như mọi field Settings
+   khác (đã bắt buộc Admin phía server cho mọi ghi p_kind='settings' — xem gmp_save_record).
+   Traffic đo được (todayMB) và trạng thái NORMAL/DATA_SAVING/PROTECTION tính trong cloud.js —
+   đọc qua window.GMPCloud.trafficState(), không tính lại ở đây để tránh lệch 2 nơi.
+============================================================ */
+function egressCfg(){
+  return Object.assign({enabled:true,softLimitMB:100,hardLimitMB:200,extraTodayMB:0,extraDate:"",unlockToday:false,unlockDate:""}, SETTINGS.egressControl||{});
+}
+function renderEgressSettings(){
+  const box = $("#egressEnabled"); if(!box) return; // card chỉ tồn tại trong DOM khi tab Cài đặt có mặt
+  const cfg = egressCfg();
+  const t = window.GMPCloud?.trafficState ? window.GMPCloud.trafficState() : {state:"NORMAL",todayMB:0,effectiveHardLimitMB:cfg.hardLimitMB,pendingMediaCount:0};
+  $("#egressEnabled").checked = !!cfg.enabled;
+  $("#egressSoft").value = cfg.softLimitMB;
+  $("#egressHard").value = cfg.hardLimitMB;
+  $("#egressEffectiveHard").textContent = Math.round(t.effectiveHardLimitMB);
+  $("#egressPendingMedia").textContent = t.pendingMediaCount||0;
+  $("#egressTrafficLabel").textContent = "Today's estimated traffic: " + t.todayMB.toFixed(1) + " / " + Math.round(t.effectiveHardLimitMB) + " MB";
+  const pct = t.effectiveHardLimitMB>0 ? Math.min(100, t.todayMB/t.effectiveHardLimitMB*100) : 0;
+  const bar = $("#egressTrafficBar");
+  bar.style.width = pct + "%";
+  bar.style.background = t.state==="PROTECTION" ? "#b42318" : t.state==="DATA_SAVING" ? "#c98a00" : "#0b5e52";
+  const badge = $("#egressStateBadge");
+  badge.textContent = t.state==="PROTECTION" ? "🔴 Protection" : t.state==="DATA_SAVING" ? "🟠 Data Saving" : "🟢 Normal";
+  badge.style.color = bar.style.background;
+  const unlockBtn = $("#egressUnlockBtn");
+  if(unlockBtn) unlockBtn.textContent = t.unlocked ? "🔒 Lock Today" : "🔓 Unlock Today";
+}
+async function saveEgressSettings(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)){ toast("⚠️ Chỉ Admin được đổi Data & Egress Control"); return; }
+  const soft = Number($("#egressSoft").value), hard = Number($("#egressHard").value);
+  if(!(soft>0) || !(hard>0)){ toast("⚠️ Soft/Hard Limit phải lớn hơn 0"); return; }
+  if(!(soft<hard)){ toast("⚠️ Soft Limit phải nhỏ hơn Hard Limit"); return; }
+  const cfg = egressCfg();
+  cfg.enabled = $("#egressEnabled").checked; cfg.softLimitMB = soft; cfg.hardLimitMB = hard;
+  SETTINGS.egressControl = cfg; SETTINGS.updatedAt = Date.now();
+  const ok = await saveSettings();
+  logAction("Sửa Data & Egress Control", `Soft ${soft}MB / Hard ${hard}MB, Protection ${cfg.enabled?"ON":"OFF"}`, "");
+  renderEgressSettings();
+  toast(ok ? "✅ Đã lưu Data & Egress Control" : "⚠️ Đã lưu tạm (trình duyệt chặn IndexedDB)");
+}
+async function addExtraMBToday(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)){ toast("⚠️ Chỉ Admin được thêm Extra MB"); return; }
+  const amount = Number($("#egressExtraInput").value);
+  if(!(amount>0)){ toast("⚠️ Nhập số MB hợp lệ"); return; }
+  const cfg = egressCfg();
+  const today = todayISO();
+  cfg.extraTodayMB = (cfg.extraDate===today ? Number(cfg.extraTodayMB)||0 : 0) + amount;
+  cfg.extraDate = today;
+  SETTINGS.egressControl = cfg; SETTINGS.updatedAt = Date.now();
+  const ok = await saveSettings();
+  logAction("Data & Egress Control", `+${amount}MB Extra hôm nay (tổng ${cfg.extraTodayMB}MB)`, "");
+  renderEgressSettings();
+  toast(ok ? `✅ Đã thêm +${amount} MB cho hôm nay` : "⚠️ Đã lưu tạm (trình duyệt chặn IndexedDB)");
+}
+async function toggleUnlockToday(){
+  if(!(CURRENT_USER && CURRENT_USER.admin)){ toast("⚠️ Chỉ Admin được Unlock"); return; }
+  const cfg = egressCfg();
+  const today = todayISO();
+  const currentlyUnlocked = cfg.unlockToday && cfg.unlockDate===today;
+  if(!currentlyUnlocked && !confirm("Bỏ qua Hard Limit cho hôm nay? App sẽ hoạt động bình thường (NORMAL) bất kể traffic hiện tại.")) return;
+  cfg.unlockToday = !currentlyUnlocked; cfg.unlockDate = today;
+  SETTINGS.egressControl = cfg; SETTINGS.updatedAt = Date.now();
+  const ok = await saveSettings();
+  logAction("Data & Egress Control", cfg.unlockToday ? "Unlock Today (bỏ Hard Limit hôm nay)" : "Lock Today (khôi phục Hard Limit)", "");
+  renderEgressSettings();
+  toast(ok ? (cfg.unlockToday?"🔓 Đã Unlock hôm nay":"🔒 Đã khôi phục Hard Limit hôm nay") : "⚠️ Đã lưu tạm (trình duyệt chặn IndexedDB)");
+}
+
+/* ============================================================
    STATUS LOGIC
 ============================================================ */
 function actionStatus(a){
@@ -1770,7 +1870,7 @@ function wireAddEvInputs(){
 async function handleAddImg(e){
   const f = e.target.files && e.target.files[0];
   if(!f) return;
-  addImgData = await compressImageFile(f);
+  addImgData = await compressImageFile(f, null, null, {mediaType:"finding"});
   renderAddEvRow();
 }
 
@@ -1796,14 +1896,14 @@ function extractImageFile(dt){
 async function applyActionEvidence(fid, aid, file){
   const a = findAction(fid, aid);
   if(!a) return;
-  a.evidence = await compressImageFile(file);
+  a.evidence = await compressImageFile(file, null, null, {findingId:fid, actionId:aid, mediaType:"action-evidence"});
   touch(findFinding(fid));
   await saveFindings(); renderAction(); renderDashboard();
 }
 async function applyConfirmEvidence(fid, aid, file){
   const a = findAction(fid, aid);
   if(!a) return;
-  a.confirmEvidence = await compressImageFile(file);
+  a.confirmEvidence = await compressImageFile(file, null, null, {findingId:fid, actionId:aid, mediaType:"confirm-evidence"});
   touch(findFinding(fid));
   await saveFindings(); renderConfirm();
 }
@@ -1817,14 +1917,14 @@ function wireAddEvDropzone(){
     e.preventDefault(); zone.classList.remove("dragover");
     const f = extractImageFile(e.dataTransfer);
     if(!f){ toast("⚠️ Vui lòng kéo-thả 1 file ảnh (jpg/png)"); return; }
-    addImgData = await compressImageFile(f); renderAddEvRow();
+    addImgData = await compressImageFile(f, null, null, {mediaType:"finding"}); renderAddEvRow();
     toast("✅ Đã thêm ảnh (kéo-thả)");
   });
   zone.addEventListener("paste", async e=>{
     const f = extractImageFile(e.clipboardData);
     if(!f) return;
     e.preventDefault();
-    addImgData = await compressImageFile(f); renderAddEvRow();
+    addImgData = await compressImageFile(f, null, null, {mediaType:"finding"}); renderAddEvRow();
     toast("📋 Đã dán ảnh từ clipboard");
   });
 }
@@ -3351,7 +3451,7 @@ function renderStats(){
 // Cloud persistence and backups are implemented in cloud.js.
 let syncing = false;
 function maybeAutoSync(){ window.GMPCloud?.schedule(); }
-function backupMediaFile(file){ return window.GMPCloud?.backupMedia(file); }
+function backupMediaFile(file, meta){ return window.GMPCloud?.backupMedia(file, meta); }
 function backupJson(){}
 function restoreJson(){}
 function clearAllData(){}
@@ -3758,6 +3858,7 @@ function fullRerender(){
   applyTabOrder();
   renderTabOrderSettings();
   renderUserTabPermissions();
+  renderEgressSettings();
   $("#setCompany").value = SETTINGS.company;
   $("#setTarget").value = SETTINGS.target;
 }
@@ -3831,6 +3932,9 @@ async function boot(){
   $("#resetTabOrderBtn").addEventListener("click", resetTabOrder);
   $("#saveUserTabPermBtn").addEventListener("click", saveUserTabPermissions);
   $("#resetUserTabPermBtn").addEventListener("click", resetUserTabPermissions);
+  $("#egressSaveBtn").addEventListener("click", saveEgressSettings);
+  $("#egressExtraBtn").addEventListener("click", addExtraMBToday);
+  $("#egressUnlockBtn").addEventListener("click", toggleUnlockToday);
   $("#dedupFindingsBtn").addEventListener("click", dedupFindingsNow);
   $("#purgeBlankActionsBtn").addEventListener("click", purgeBlankActionsNow);
   $("#purgeImgBtn").addEventListener("click", purgeOldClosedImages);
@@ -3912,6 +4016,6 @@ async function boot(){
 </script>
 <script src="config.js?v=20260920-2"></script>
 <script src="vendor/supabase.js"></script>
-<script src="cloud.js?v=20260919-2"></script>
+<script src="cloud.js?v=20260924-1"></script>
 </body>
 </html>

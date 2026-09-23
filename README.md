@@ -131,6 +131,20 @@ Nhân viên đăng nhập bằng **Tên đăng nhập + mật khẩu**, không c
 3. Vào tab **👥 Quản lý người dùng → ➕ Thêm người dùng**: chọn vai trò **User** sẽ hiện ô **Tên đăng nhập** (chữ thường/số, có thể chứa `. _ -`, không dấu/khoảng trắng) thay cho Email; chọn vai trò **Admin** vẫn hiện ô **Email** như cũ.
 4. Tài khoản Admin/User đã tạo từ trước (bằng email) không bị ảnh hưởng, vẫn đăng nhập bằng email như cũ — script chỉ áp dụng cho tài khoản tạo mới bằng Tên đăng nhập.
 
+## 9. Data & Egress Control (kiểm soát lưu lượng Supabase)
+
+Admin tự kiểm soát lưu lượng Supabase app tạo ra mỗi ngày ngay trong app, tại **⚙️ Cài đặt → 🛡️ Data & Egress Control**, không cần chờ đụng trần Supabase mới biết. Có 3 trạng thái, tự động, không bao giờ khoá việc ghi nhận Finding/Action:
+
+- **🟢 Normal** (traffic < Soft Limit): hoạt động như bình thường, không đổi gì.
+- **🟠 Data Saving** (Soft ≤ traffic < Hard): giãn vòng đồng bộ nền từ 60s lên 180s. Nghiệp vụ chính không đổi.
+- **🔴 Protection** (traffic ≥ Hard + Extra hôm nay, trừ khi đang Unlock): dừng hẳn vòng đồng bộ nền (chỉ còn đồng bộ khi có thay đổi thật + bấm "Đồng bộ" thủ công), tạm dừng tải Data Input Log nền, và **tạm hoãn upload ảnh gốc** lên Storage `gmp-mediasave` (ảnh nén vẫn lưu trong Finding/Action bình thường — không mất ảnh, không mất Action, chỉ ảnh gốc chờ tải lên sau).
+
+Soft/Hard Limit (mặc định 100/200 MB), bật/tắt Protection, "+ Extra MB Today" và "Unlock Today" đều là cấu hình chỉ Admin sửa được, đồng bộ tự động giữa các máy (nằm trong `SETTINGS`, đã được `gmp_save_record` bắt buộc quyền Admin sẵn — không cần RPC riêng). **Extra MB** và **Unlock Today** chỉ có hiệu lực trong ngày hiện tại, tự hết hiệu lực khi sang ngày mới (không cần thao tác gì thêm); Soft/Hard Limit thì giữ nguyên qua các ngày cho tới khi Admin đổi lại.
+
+Traffic hiển thị là **ước tính riêng của app này** (đo qua kích thước request/response thật khi đồng bộ — không phải số Egress chính xác trên hoá đơn Supabase), tổng hợp từ nhiều máy bằng cách mỗi máy tự báo cáo tổng byte của mình theo ngày (gộp vào nhịp đồng bộ có sẵn, không tạo request riêng chỉ để đo).
+
+**Cần làm:** Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260924_egress_control.sql`, copy toàn bộ nội dung và bấm **Run**. Script tạo bảng `gmp_traffic_daily` + RPC `gmp_report_traffic`, dùng `pg_cron` đã bật từ mục 6 để tự dọn dữ liệu traffic cũ hơn 14 ngày (không cần bật lại `pg_cron`).
+
 ---
 
 ## Kiểm tra trước bàn giao
