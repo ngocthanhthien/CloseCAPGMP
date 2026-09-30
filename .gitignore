@@ -8,3 +8,5 @@ GMP_CloseGap_App.html
 HANDOFF_GMP_CloseGap_App.md
 *Backup*.json
 *Conflict*.json
+cloudflare/worker/.wrangler/
+cloudflare/worker/node_modules/

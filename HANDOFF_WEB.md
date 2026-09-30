@@ -1,8 +1,22 @@
-# Handoff bản web — cập nhật 2026-09-18
+# Handoff bản web — cập nhật 2026-09-30
 
 Bàn giao để tiếp tục chỉnh sửa bằng công cụ AI khác. Đọc file này trước, sau đó [README.md](README.md) để biết hướng dẫn setup/vận hành đầy đủ (từng mục có đánh số, đã cập nhật theo các thay đổi dưới đây).
 
-## 1. Trạng thái dự án hiện tại
+## 0. QUAN TRỌNG — 2026-09-30: đang song song dựng backend Cloudflare (chưa cắt chuyển)
+
+**Site thật vẫn chạy Supabase, KHÔNG có gì thay đổi cho người dùng.** Đang chuẩn bị chuyển toàn bộ backend (database + auth + storage) từ Supabase sang Cloudflare (D1 + R2 + Workers) theo yêu cầu người dùng, nhưng **chủ động giữ Supabase sống** và chỉ cắt chuyển khi người dùng ra lệnh rõ ràng. Chi tiết đầy đủ, đã test qua `curl` thật: [cloudflare/README.md](cloudflare/README.md).
+
+Tóm tắt cực ngắn:
+- Đã tạo D1 database (`gmp-closegap-db`), R2 bucket (`gmp-mediasave`), Worker (`gmp-closegap-api`, đã deploy tại `https://gmp-closegap-api.dangthanhbinh53.workers.dev`) — toàn bộ trên tài khoản Cloudflare `dangthanhbinh53@gmail.com` (đăng nhập OAuth qua `wrangler login`, đã xác minh bằng `wrangler whoami`).
+- Code Worker: `cloudflare/worker/src/*.js` — port đủ mọi rule của `gmp_save_record`/`gmp_report_traffic`/`admin-users` từ Supabase sang, đã test qua `curl` (login, CRUD record, conflict revision, phân quyền admin/user, upload R2, CORS) — xem log test chi tiết trong `cloudflare/README.md` mục 4.
+- Frontend mới (`cloudflare/frontend-ready/cloud.js` + `config.js`) đã viết xong, **CHƯA gắn vào site thật** — nằm riêng chờ lệnh cắt chuyển, giữ nguyên `window.GMPCloud` nên `index.html` không cần sửa.
+- **Phát hiện quan trọng khi test thật** (không có trong tài liệu Cloudflare): PBKDF2 qua Web Crypto trên Workers giới hạn cứng **tối đa 100.000 vòng lặp** (thử 210.000 theo khuyến nghị OWASP bị lỗi 500 ngay lập tức) — đã áp dụng 100.000, ghi rõ trong code.
+- **Đã thống nhất với người dùng**: mật khẩu Supabase Auth cũ không thể chuyển sang (giới hạn kỹ thuật, không xuất được hash) — khi cắt chuyển thật, mọi người đặt lại mật khẩu mới một lần, còn cách đăng nhập/danh sách tài khoản giữ nguyên.
+- D1/R2 hiện đang **rỗng** (đã xoá sạch dữ liệu test) — sẵn sàng nhận dữ liệu thật qua backup/restore JSON khi cắt chuyển. Xem `cloudflare/README.md` mục 5 cho từng bước cắt chuyển cụ thể (script `cloudflare/worker/create-first-admin.mjs` để tạo Admin đầu tiên).
+
+**Mục 1-5 bên dưới đã CŨ (dừng ở phiên 2026-09-18/20, trước cả tính năng Data & Egress Control đã build sau đó)** — coi là lịch sử tham khảo, không phải trạng thái hiện tại. Muốn biết chính xác trạng thái Supabase bây giờ, dùng `git log`/`git diff` trực tiếp thay vì tin theo mục 1 dưới đây.
+
+## 1. Trạng thái dự án hiện tại (CŨ — xem mục 0 để biết cập nhật mới nhất)
 
 - **2026-09-20: đã CHUYỂN sang project Supabase mới, project ref hiện tại là `ftxibcrwknqgazechmqc`** (project cũ `qrodjneqbfvgfisjvzwp`; có 1 ref trung gian `somfruwvvnnyyqwrxozh` chỉ tồn tại trong `config.js` vài phút rồi bị thay tiếp bằng ref hiện tại — nếu thấy `somfruwvvnnyyqwrxozh` ở đâu đó (log cũ, ghi chú tay...) thì đó KHÔNG phải project đang dùng). `config.js` đã điền URL + publishable key của project `ftxibcrwknqgazechmqc`. `supabase/.temp/*` (kể cả `project-ref`) trong repo vẫn còn trỏ project CŨ `qrodjneqbfvgfisjvzwp` vì phiên AI không có quyền chạy `supabase login`/`link` (cần trình duyệt) — **người dùng cần tự chạy `npx supabase link --project-ref ftxibcrwknqgazechmqc` trên máy họ** để các file `.temp` này (có tracked trong git) khớp với project đang dùng thật, trước khi deploy lại Edge Function.
 - **Project mới cần thiết lập từ đầu**: chạy `schema.sql` rồi 3 migration `20260916`/`20260917`/`20260918` (bỏ qua `20260915` — nội dung đã nằm sẵn trong `schema.sql`), tạo lại Admin đầu tiên, deploy lại Edge Function `admin-users`, phục hồi dữ liệu Finding/Settings từ file backup JSON (tài khoản/mật khẩu KHÔNG tự chuyển qua, phải tạo lại thủ công). Xem hướng dẫn đầy đủ README.md mục 1, 5, 8.

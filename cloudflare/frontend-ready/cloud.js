@@ -1,8 +1,9 @@
-/* Cloudflare bridge — replaces the retired Supabase bridge. Same architecture, same
-   window.GMPCloud contract, same local-first/optimistic-concurrency/incremental-sync
-   design, talking to the Cloudflare Worker API (see cloudflare/worker/) instead of
-   Supabase. The retired Supabase-based version lives in git history (before the
-   2026-09-30 cutover commit) and in cloudflare/README.md's notes if ever needed again. */
+/* Cloudflare bridge — replaces the Supabase bridge (cloud.js) with the same architecture,
+   same window.GMPCloud contract, same local-first/optimistic-concurrency/incremental-sync
+   design, talking to the Cloudflare Worker API (cloudflare/worker/) instead of Supabase.
+   NOT YET LIVE — staged in cloudflare/frontend-ready/ until cutover is confirmed. To cut
+   over: copy this file and config.js over the live cloud.js/config.js (or repoint the
+   <script src> in index.html), bump the cache-busting ?v=, and publish. */
 (() => {
   'use strict';
   const clone = value => structuredClone(value);

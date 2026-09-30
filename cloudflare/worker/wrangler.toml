@@ -1,0 +1,29 @@
+name = "gmp-closegap-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "gmp-closegap-db"
+database_id = "690c453e-fa4f-404f-9d4c-3122996d63ca"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "gmp-mediasave"
+
+# Purge old audit/traffic rows daily at 03:00 UTC — same schedule as the retired
+# pg_cron jobs gmp_purge_old_audit / gmp_purge_old_traffic.
+[triggers]
+crons = ["0 3 * * *"]
+
+[vars]
+# Comma-separated list of allowed browser origins (CORS) — scheme+host only, no path/
+# trailing slash. GitHub Pages is the real site; http://localhost:8080 stays here
+# permanently for local testing (harmless — every request is still JWT-gated regardless of
+# origin, CORS only affects which sites a browser lets read the response). Never use "*"
+# since requests carry an Authorization bearer token.
+ALLOWED_ORIGINS = "https://ngocthanhthien.github.io,http://localhost:8080"
