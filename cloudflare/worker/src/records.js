@@ -1,7 +1,7 @@
-// Port of Supabase RPC gmp_save_record (supabase/schema.sql) + the GET side of the
-// changedRows() keyset-pagination query cloud.js used against gmp_records. Every numbered
-// rule comment below corresponds 1:1 to a rule in the original PL/pgSQL function — see the
-// migration plan's "Danh sách rule" section. Nothing here should diverge from that list.
+// Save/read path for gmp_records: the same 17 validation rules the app has always enforced
+// (optimistic concurrency by revision, admin-only settings/delete, action-review locking,
+// embedded-image format, 20 MB cap, etc.) — ported from the original Postgres RPC when the
+// backend moved to Cloudflare; see HANDOFF_WEB.md for that migration's history.
 import { json, err, validId, validEmbeddedImage, bytesOf, nowISO } from "./util.js";
 import { authenticate, requireAdmin } from "./auth.js";
 

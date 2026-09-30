@@ -1,78 +1,43 @@
 # Handoff bản web — cập nhật 2026-09-30
 
-Bàn giao để tiếp tục chỉnh sửa bằng công cụ AI khác. Đọc file này trước, sau đó [README.md](README.md) để biết hướng dẫn setup/vận hành đầy đủ (từng mục có đánh số, đã cập nhật theo các thay đổi dưới đây).
+Bàn giao để tiếp tục chỉnh sửa bằng công cụ AI khác. Đọc file này trước, sau đó [README.md](README.md) để biết hướng dẫn setup/vận hành đầy đủ.
 
-## 0. QUAN TRỌNG — 2026-09-30: đang song song dựng backend Cloudflare (chưa cắt chuyển)
+## 0. Trạng thái hiện tại: đã cắt chuyển hoàn toàn sang Cloudflare, Supabase đã gỡ khỏi repo
 
-**Site thật vẫn chạy Supabase, KHÔNG có gì thay đổi cho người dùng.** Đang chuẩn bị chuyển toàn bộ backend (database + auth + storage) từ Supabase sang Cloudflare (D1 + R2 + Workers) theo yêu cầu người dùng, nhưng **chủ động giữ Supabase sống** và chỉ cắt chuyển khi người dùng ra lệnh rõ ràng. Chi tiết đầy đủ, đã test qua `curl` thật: [cloudflare/README.md](cloudflare/README.md).
+Site thật https://ngocthanhthien.github.io/CloseCAPGMP/ chạy 100% trên Cloudflare (D1 + R2 + Workers). Không còn Supabase ở bất kỳ đâu trong repo (thư mục `supabase/`, `vendor/supabase.js`, `cloudflare/frontend-ready/`, `THIRD_PARTY_NOTICES.md` đã xoá — commit riêng, xem `git log`). Dự án Supabase trên cloud (nếu người dùng chưa tự xoá qua Dashboard của họ) là tài nguyên ngoài repo, không thuộc phạm vi theo dõi ở đây.
 
-Tóm tắt cực ngắn:
-- Đã tạo D1 database (`gmp-closegap-db`), R2 bucket (`gmp-mediasave`), Worker (`gmp-closegap-api`, đã deploy tại `https://gmp-closegap-api.dangthanhbinh53.workers.dev`) — toàn bộ trên tài khoản Cloudflare `dangthanhbinh53@gmail.com` (đăng nhập OAuth qua `wrangler login`, đã xác minh bằng `wrangler whoami`).
-- Code Worker: `cloudflare/worker/src/*.js` — port đủ mọi rule của `gmp_save_record`/`gmp_report_traffic`/`admin-users` từ Supabase sang, đã test qua `curl` (login, CRUD record, conflict revision, phân quyền admin/user, upload R2, CORS) — xem log test chi tiết trong `cloudflare/README.md` mục 4.
-- Frontend mới (`cloudflare/frontend-ready/cloud.js` + `config.js`) đã viết xong, **CHƯA gắn vào site thật** — nằm riêng chờ lệnh cắt chuyển, giữ nguyên `window.GMPCloud` nên `index.html` không cần sửa.
-- **Phát hiện quan trọng khi test thật** (không có trong tài liệu Cloudflare): PBKDF2 qua Web Crypto trên Workers giới hạn cứng **tối đa 100.000 vòng lặp** (thử 210.000 theo khuyến nghị OWASP bị lỗi 500 ngay lập tức) — đã áp dụng 100.000, ghi rõ trong code.
-- **Đã thống nhất với người dùng**: mật khẩu Supabase Auth cũ không thể chuyển sang (giới hạn kỹ thuật, không xuất được hash) — khi cắt chuyển thật, mọi người đặt lại mật khẩu mới một lần, còn cách đăng nhập/danh sách tài khoản giữ nguyên.
-- D1/R2 hiện đang **rỗng** (đã xoá sạch dữ liệu test) — sẵn sàng nhận dữ liệu thật qua backup/restore JSON khi cắt chuyển. Xem `cloudflare/README.md` mục 5 cho từng bước cắt chuyển cụ thể (script `cloudflare/worker/create-first-admin.mjs` để tạo Admin đầu tiên).
+- **Hạ tầng**: D1 `gmp-closegap-db`, R2 `gmp-mediasave`, Worker `gmp-closegap-api` (`https://gmp-closegap-api.dangthanhbinh53.workers.dev`), tất cả trên tài khoản Cloudflare `dangthanhbinh53@gmail.com`.
+- **Code Worker**: `cloudflare/worker/src/*.js` — port đủ 17 rule nghiệp vụ của `gmp_save_record` cũ, cộng auth tự xây (PBKDF2 100.000 vòng lặp — mức trần cứng của Workers, không có trong tài liệu Cloudflare, phát hiện qua test thật) + JWT tự ký. Chi tiết lệnh thao tác: [cloudflare/README.md](cloudflare/README.md).
+- **Frontend**: [cloud.js](cloud.js) + [config.js](config.js) ở gốc repo LÀ bản Cloudflare — không còn thư mục `frontend-ready` riêng, gắn thẳng vào `index.html` production.
+- **Dữ liệu thật đã chuyển xong**: 20 tài khoản (từ CSV người dùng cung cấp, mỗi người mật khẩu mới — mật khẩu Supabase Auth cũ không thể xuất/migrate, giới hạn kỹ thuật đã thống nhất trước với người dùng) + toàn bộ Finding/Action phục hồi từ backup JSON xuất ra từ hệ Supabase cũ trước khi cắt chuyển.
+- **Đã sửa 1 sự cố production thật sau cắt chuyển** — xem mục 1.
 
-**Mục 1-5 bên dưới đã CŨ (dừng ở phiên 2026-09-18/20, trước cả tính năng Data & Egress Control đã build sau đó)** — coi là lịch sử tham khảo, không phải trạng thái hiện tại. Muốn biết chính xác trạng thái Supabase bây giờ, dùng `git log`/`git diff` trực tiếp thay vì tin theo mục 1 dưới đây.
+## 1. Sự cố đã xử lý: retry-storm do `errcode='40001'`
 
-## 1. Trạng thái dự án hiện tại (CŨ — xem mục 0 để biết cập nhật mới nhất)
+Người dùng báo lỗi thật xảy ra trên hệ Supabase cũ (30/09, 15:20–18:40): CPU Supabase 99%, tỷ lệ lưu thành công 0%, log tăng >1GB trong vài giờ. Nguyên nhân: hàm `gmp_save_record` raise exception xung đột nghiệp vụ (revision lệch) bằng `errcode='40001'` — đây là mã PostgREST/Postgres coi là "an toàn để tự động thử lại", nên PostgREST tự lặp lại request đó liên tục (~100 lần/giây) khi client vẫn còn cố lưu, gây bão retry.
 
-- **2026-09-20: đã CHUYỂN sang project Supabase mới, project ref hiện tại là `ftxibcrwknqgazechmqc`** (project cũ `qrodjneqbfvgfisjvzwp`; có 1 ref trung gian `somfruwvvnnyyqwrxozh` chỉ tồn tại trong `config.js` vài phút rồi bị thay tiếp bằng ref hiện tại — nếu thấy `somfruwvvnnyyqwrxozh` ở đâu đó (log cũ, ghi chú tay...) thì đó KHÔNG phải project đang dùng). `config.js` đã điền URL + publishable key của project `ftxibcrwknqgazechmqc`. `supabase/.temp/*` (kể cả `project-ref`) trong repo vẫn còn trỏ project CŨ `qrodjneqbfvgfisjvzwp` vì phiên AI không có quyền chạy `supabase login`/`link` (cần trình duyệt) — **người dùng cần tự chạy `npx supabase link --project-ref ftxibcrwknqgazechmqc` trên máy họ** để các file `.temp` này (có tracked trong git) khớp với project đang dùng thật, trước khi deploy lại Edge Function.
-- **Project mới cần thiết lập từ đầu**: chạy `schema.sql` rồi 3 migration `20260916`/`20260917`/`20260918` (bỏ qua `20260915` — nội dung đã nằm sẵn trong `schema.sql`), tạo lại Admin đầu tiên, deploy lại Edge Function `admin-users`, phục hồi dữ liệu Finding/Settings từ file backup JSON (tài khoản/mật khẩu KHÔNG tự chuyển qua, phải tạo lại thủ công). Xem hướng dẫn đầy đủ README.md mục 1, 5, 8.
-- **Đã có GitHub repo**: `origin` trỏ tới `https://github.com/ngocthanhthien/CloseCAPGMP.git`, nhánh `main` đang track `origin/main`.
-- **Chưa xác minh được** (không có quyền truy cập Supabase Dashboard từ phiên làm việc AI): trên project MỚI, migration nào đã thực sự chạy, Edge Function `admin-users` đã deploy chưa. Việc đầu tiên nên làm khi tiếp tục: vào Supabase Dashboard của project mới → SQL Editor, đối chiếu thủ công từng cột/hàm được liệt kê ở mục 2 để biết đã áp dụng tới migration nào.
-- **Nợ tài liệu**: mục 2 bên dưới (lịch sử thay đổi) dừng ở phiên 09-18 — các phiên sau đó (tối ưu Egress: audit log giới hạn 20 dòng + tải theo nhu cầu, `member()` dùng `getSession()` thay `getUser()`, poll 60s, bỏ full-reload khi mạng nối lại; thêm phân quyền Tab cho User ở Cài đặt) **chưa được ghi lại ở đây** — cần đọc trực tiếp `git log`/diff để biết chi tiết nếu cần.
+Đã rà soát và xử lý cả 2 phía:
+- **Cloudflare (hệ đang chạy thật)**: xác nhận **không thể xảy ra lỗi này** — kiến trúc không có tầng PostgREST tự động retry theo `errcode`; xung đột revision được Worker phát hiện qua kiểm tra `changes===0` sau UPDATE có điều kiện, trả về `409` một lần duy nhất, không có cơ chế nào tự lặp lại. Dù vậy vẫn phát hiện và vá một lỗ hổng liên quan trong `cloud.js`: trước đó push thất bại (bất kỳ lý do gì) sẽ bị vòng lặp đồng bộ nền 60s thử lại vô thời hạn không phân biệt loại lỗi. Đã sửa [cloud.js](cloud.js): thêm state `blocked` (song song `conflicts`), `apiCall()` giờ chỉ tự retry lỗi mạng/5xx (tối đa 5 lần, backoff 2s/4s/8s/16s/32s), lỗi `409` → xung đột (không tự gửi lại), lỗi `400/401/403` → đưa vào `blocked` và dừng, không lặp vô hạn.
+- **`supabase/` (đã xoá khỏi repo, chỉ còn trong lịch sử git)**: từng xác nhận `errcode='40001'` có mặt trong `schema.sql` và migration `20260915_user_management.sql`, đã vá cả hai bằng mã lỗi tuỳ chỉnh (`PT409`/`PT403`/`PT400`, không nằm trong danh sách mã PostgREST tự retry) trước khi các file này bị xoá khỏi repo trong đợt dọn dẹp 5S (mục 2) — chỉ có giá trị tham khảo lịch sử/rollback, không ảnh hưởng hệ đang chạy.
 
-## 2. Lịch sử thay đổi theo phiên làm việc (mới nhất trước)
+## 2. Dọn dẹp 5S (2026-09-30) — xoá toàn bộ Supabase khỏi repo
 
-### Phiên 2026-09-16 → 09-18 (AI: Claude / Claude Code)
+Sau khi xác nhận Cloudflare ổn định, đã dọn sạch mọi tàn dư Supabase khỏi repo:
+- Xoá: `supabase/` (schema, migrations, Edge Function, `.temp/*`), `vendor/supabase.js`, `cloudflare/frontend-ready/` (đã gộp vào gốc repo từ lâu, thư mục staging không còn cần), `THIRD_PARTY_NOTICES.md` (chỉ có nội dung license SDK Supabase, không dùng SDK ngoài nào nữa nên không cần file thông báo).
+- Sửa các comment/text còn trỏ tới đường dẫn đã xoá: [config.js](config.js), [cloudflare/worker/src/records.js](cloudflare/worker/src/records.js), [cloudflare/worker/src/admin.js](cloudflare/worker/src/admin.js), [index.html](index.html) (8 chỗ text "Supabase" hiển thị cho người dùng → "Cloudflare").
+- Viết lại hoàn toàn [README.md](README.md) (chỉ còn hướng dẫn Cloudflare) và [cloudflare/README.md](cloudflare/README.md) (rút gọn thành ghi chú lệnh thao tác nhanh, trỏ về README gốc).
 
-1. **Đăng nhập chậm** → tối ưu: gộp 2 lần gọi `member()` thành 1, hiển thị dữ liệu cache ngay thay vì chờ mạng, audit log giảm còn 100 dòng + tự xoá sau 7 ngày (`pg_cron`).
-   → **Đã commit**: `d7e82fd` ("dd").
-2. **Đồng bộ tốn dung lượng/thời gian** → sync nền 30s chuyển từ full-table-scan sang incremental (`changedRows(syncedAt)`, watermark theo `updated_at`); full reconciliation chỉ còn khi lần đầu mở máy mới / bấm Đồng bộ thủ công / mạng vừa nối lại.
-   → **Đã commit**: `814b55e` ("d"). Migration: `supabase/migrations/20260917_incremental_sync.sql`.
-3. **Lưu mật khẩu trình duyệt** → dùng Credential Management API (`navigator.credentials.store/get`) để Chrome/Edge hiện hộp thoại lưu mật khẩu cho form đăng nhập kiểu SPA (trước đó `preventDefault()` chặn heuristic mặc định của trình duyệt).
-   → **Đã commit**: `333d04d`.
-4. **Bỏ yêu cầu email, dùng Username cho User** — Admin vẫn Email+mật khẩu, User dùng Username+mật khẩu (Supabase Auth thật, map Username → email nội bộ tự sinh `<username>@<project-ref>.users.internal`, người dùng không thấy giá trị này). Form "Thêm người dùng" của Admin tự đổi giữa ô Username/Email theo Vai trò chọn.
-   → **CHƯA COMMIT** — đang nằm trong working tree (xem mục 3). Migration: `supabase/migrations/20260918_username_login.sql` (thêm cột `username` vào `gmp_members`, chưa chắc đã chạy trên Supabase thật — xem mục 1).
-5. **Đã cân nhắc và loại bỏ**: phương án bỏ hẳn đăng nhập cho tầng User, dùng Supabase Anonymous Sign-in + danh sách "roster" không mật khẩu (theo đúng mô hình đã dùng ở dự án `GMP_Score_App` tại `C:\Apps\GMP_Score_App`). Đã build đầy đủ (migration `gmp_is_member()`/`gmp_roster`/RPC 7 tham số, popover chọn tên, `ensureSession()`...) rồi **revert lại hoàn toàn** theo yêu cầu của người dùng ("giữ phiên bản cũ Supabase Auth cho tầng User"). **Không còn dấu vết trong code** — chỉ ghi lại ở đây để AI sau không đề xuất lại mà không biết đã cân nhắc. Nếu muốn làm lại, tham khảo README/schema thật của `C:\Apps\GMP_Score_App` (đã verify chạy được ở dự án đó) thay vì làm từ đầu.
+## 3. Kiến trúc file hiện tại
 
-## 3. Git — chính xác cái gì đã lên `origin/main` và cái gì chưa
+- [index.html](index.html): giao diện + toàn bộ logic nghiệp vụ, không đổi cấu trúc so với bản gốc ngoài phần liên quan cloud/login.
+- [cloud.js](cloud.js): cầu nối Worker Cloudflare — xác thực (Username/Email + mật khẩu), đồng bộ incremental theo `revision`/`updated_at`, upload ảnh gốc R2, Data & Egress Control, retry có phân loại lỗi (mục 1).
+- [config.js](config.js): chỉ `apiBaseUrl` công khai trỏ Worker.
+- `cloudflare/worker/`: toàn bộ backend — `schema.sql` (D1), `src/*.js` (Worker), `wrangler.toml`, `create-first-admin.mjs`.
 
-```
-git log --oneline -6
-814b55e d                                                          ← origin/main hiện trỏ tới đây (cần tự git fetch để chắc chắn)
-333d04d Save/autofill login credentials via Credential Management API
-d7e82fd dd
-cf0d725 2
-e127db7 add
-6a1618e Update config.js
-```
+## 4. Lịch sử trước cắt chuyển (Supabase, tham khảo — không còn áp dụng)
 
-**Working tree hiện KHÔNG sạch** — 4 file đang sửa dở (mục 2.4, Username-login), chưa commit:
-
-```
- M README.md
- M cloud.js
- M index.html
- M supabase/functions/admin-users/index.ts
-?? supabase/migrations/20260918_username_login.sql
-```
-
-Đây là các thay đổi **muốn giữ** (không phải nhánh ẩn danh đã bỏ ở mục 2.5). Nên `git add` + `git commit` các file này trước khi làm gì tiếp, để tránh mất việc nếu công cụ AI khác hoặc thao tác thủ công vô tình `git checkout`/`git reset`.
-
-## 4. Kiến trúc file (không đổi so với bản gốc, chỉ cập nhật mô tả)
-
-- [index.html](index.html): giao diện + code nghiệp vụ chuyển thể từ app offline. Không sửa cấu trúc gốc ngoài phần liên quan tới cloud/login.
-- [cloud.js](cloud.js): cầu nối Supabase — xác thực (Email hoặc Username+mật khẩu), kiểm tra `gmp_members`, bridge IndexedDB, optimistic concurrency theo `revision`, đồng bộ incremental, Storage ảnh gốc, backup/import JSON.
-- [config.js](config.js): Project URL + publishable key **đã điền thật**, không phải placeholder.
-- `supabase/schema.sql` + `supabase/migrations/*.sql`: chạy `schema.sql` một lần đầu trên project mới, sau đó các migration theo thứ tự thời gian trong tên file. Xem mục 1 về việc xác minh đã chạy tới đâu trên project thật.
-- `supabase/functions/admin-users/index.ts`: Edge Function service_role, quản lý tài khoản (tạo/đổi vai trò/vô hiệu hoá), gồm cả logic Username→email nội bộ (mục 2.4). Deploy bằng `npx supabase functions deploy admin-users`.
-- `vendor/supabase.js`: SDK Supabase đóng gói local, bản 2.116.0, có hỗ trợ `signInAnonymously` (dùng thử ở mục 2.5, hiện không dùng) — xem THIRD_PARTY_NOTICES.md.
+Trước 2026-09-30 dự án chạy trên Supabase (Postgres + Auth + Storage + Edge Function + pg_cron), từng trải qua: tối ưu tốc độ đăng nhập, đồng bộ incremental, lưu mật khẩu trình duyệt, đổi sang Username-login cho tầng User (hack email nội bộ `<username>@<project-ref>.users.internal`), cân nhắc rồi loại bỏ phương án Anonymous Sign-in, đổi project Supabase 2 lần, và thêm tính năng Data & Egress Control. Toàn bộ chi tiết kỹ thuật của giai đoạn này chỉ còn trong `git log` (trước commit xoá `supabase/`), không còn phản ánh trạng thái repo hiện tại nên không chép lại ở đây.
 
 ## 5. Việc cần làm khi tiếp tục
 
-1. Quyết định: commit các thay đổi Username-login (mục 3) hay không, trước khi sửa thêm.
-2. Xác minh migration nào đã chạy trên Supabase thật (mục 1) — đặc biệt `20260918_username_login.sql` (cột `username`) và Edge Function `admin-users` bản mới (có hỗ trợ tham số `username`) — nếu chưa chạy/deploy, tính năng Username-login trong code sẽ lỗi khi Admin thử tạo tài khoản User.
-3. README.md đã cập nhật đầy đủ hướng dẫn setup theo từng mục — coi đó là nguồn chính, file này chỉ tóm tắt lịch sử/bàn giao.
+Không có việc dở dang nào từ đợt dọn dẹp này. Nếu tiếp tục phát triển: đọc README.md mục tương ứng trước khi sửa, và nhớ nguyên tắc retry đã thống nhất ở mục 1 (409/400/401/403 không bao giờ tự gửi lại; chỉ mạng/5xx mới retry, tối đa 5 lần) khi đụng tới bất kỳ logic gọi API nào trong `cloud.js`.

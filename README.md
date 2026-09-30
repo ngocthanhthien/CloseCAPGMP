@@ -1,157 +1,124 @@
-# GMP Close Gap — GitHub Pages + Supabase
+# GMP Close Gap — GitHub Pages + Cloudflare
 
-Bản web được tạo từ app offline ngày 14/09/2026. Chưa kết nối project thật và chưa publish.
-Chỉ upload **nội dung thư mục ready** vào repository; không upload HTML/handoff gốc vì có mật khẩu cũ.
+App quản lý ghi nhận Finding & đóng Gap GMP theo khu vực (ILD Coffee Vietnam). Frontend host tĩnh trên **GitHub Pages**; toàn bộ backend (dữ liệu, xác thực, ảnh gốc, dọn dẹp định kỳ) chạy trên **Cloudflare** (D1 + R2 + Workers + Cron Triggers). Site thật: https://ngocthanhthien.github.io/CloseCAPGMP/
 
-## 1. Tạo Supabase
+> Dự án trước đây dùng Supabase — đã chuyển hẳn sang Cloudflare (2026-09-30), không còn phụ thuộc Supabase. Xem [HANDOFF_WEB.md](HANDOFF_WEB.md) nếu cần lịch sử di chuyển.
 
-1. Đăng nhập https://supabase.com/dashboard và chọn New project. Đặt tên `gmp-closegap`, chọn khu vực gần Việt Nam. Tự đặt và giữ kín mật khẩu database.
-2. Vào SQL Editor, chạy toàn bộ `supabase/schema.sql` **một lần trên project mới**. Script tạo bảng, phân quyền, hàm lưu dữ liệu và bucket ảnh riêng tư.
-3. Vào Authentication → Users → Add user → Create new user. Tạo email/mật khẩu cho Admin đầu tiên và từng nhân viên. Không dùng lại mật khẩu nhúng trong bản offline.
-4. Cấp quyền cho tài khoản bằng SQL dưới đây (thay email/tên thật). Mỗi người phải có tài khoản Authentication trước. Không có trong `gmp_members` thì không truy cập dữ liệu được, kể cả đăng ký thành công.
+## 1. Tạo hạ tầng Cloudflare
 
-```sql
-insert into public.gmp_members(user_id, display_name, role)
-select id, 'Tên quản trị viên', 'admin'
-from auth.users where lower(email) = lower('EMAIL_ADMIN_CUA_BAN')
-on conflict(user_id) do update
-set display_name=excluded.display_name, role=excluded.role;
+Cần [Node.js](https://nodejs.org) và tài khoản Cloudflare (miễn phí đủ dùng cho quy mô nội bộ).
+
+```bash
+cd cloudflare/worker
+npx wrangler login                                  # mở trình duyệt xác thực, chỉ cần làm 1 lần
+npx wrangler d1 create gmp-closegap-db               # tạo database — copy database_id in ra
+npx wrangler r2 bucket create gmp-mediasave          # tạo bucket lưu ảnh gốc, riêng tư
 ```
 
-Dùng role `'user'` cho nhân viên. Kiểm tra bảng `gmp_members` có dòng mới sau khi chạy. Chỉ quản trị viên có quyền dashboard/database được cấp/sửa vai trò; app không tự cấp Admin.
+Dán `database_id` vừa tạo vào [`wrangler.toml`](cloudflare/worker/wrangler.toml) (mục `[[d1_databases]]`). Nếu dùng domain GitHub Pages khác, sửa `ALLOWED_ORIGINS` trong cùng file (danh sách origin được phép gọi API, phân cách bằng dấu phẩy — chỉ scheme+host, không path).
 
-5. Vào Project Settings → API hoặc Connect để lấy **Project URL** và **publishable key** (`sb_publishable_...`, hoặc legacy anon key). Điền vào `config.js`. Tuyệt đối không dùng `sb_secret_...`, `service_role` hoặc database password trong mã nguồn.
-6. Vào Authentication → URL Configuration: đặt Site URL bằng địa chỉ GitHub Pages sau khi publish. App dùng email/mật khẩu, không tự gửi thư mời hoặc email.
-7. Nên tắt tự đăng ký mới trong Authentication nếu chỉ dùng tài khoản quản trị viên cấp.
+```bash
+npx wrangler d1 execute gmp-closegap-db --remote --file=schema.sql   # tạo 4 bảng: users, gmp_records, gmp_audit, gmp_traffic_daily
+node -e "console.log(require('crypto').randomBytes(48).toString('base64'))" | npx wrangler secret put JWT_SECRET   # sinh khoá ký JWT ngẫu nhiên
+npx wrangler deploy                                  # deploy Worker — in ra URL dạng https://gmp-closegap-api.<tài-khoản>.workers.dev
+```
+
+Ghi lại URL Worker vừa deploy — cần điền vào `config.js` ở bước 2.
 
 ## 2. Tạo GitHub repository và publish
 
-1. Đăng nhập https://github.com/new, tạo repository tên `gmp-closegap` (hoặc tên bạn muốn).
-2. Upload toàn bộ **nội dung bên trong** `ready`, giữ thư mục `vendor` và `supabase`. `index.html` phải nằm ngay ở thư mục gốc repository.
-3. Vào Settings → Pages → Build and deployment → Deploy from a branch → chọn `main`, thư mục `/ (root)` → Save.
-4. Chờ GitHub Pages triển khai xong. Link thường là `https://TEN_GITHUB.github.io/gmp-closegap/`; dùng link thực tế do GitHub hiển thị.
-5. Kiểm tra: mở link bằng cửa sổ riêng tư phải thấy đăng nhập; đăng nhập Admin, tạo Finding thử, mở trên thiết bị thứ hai để xác nhận đồng bộ. Kiểm tra nhân viên không xác nhận/xoá Finding được.
+1. Tạo repository trên GitHub, `index.html` phải nằm ngay thư mục gốc.
+2. Upload `index.html`, `cloud.js`, `config.js`, `.nojekyll` lên repo (không cần thư mục `vendor`/`supabase` — không còn phụ thuộc SDK ngoài nào).
+3. Điền `config.js`:
+   ```js
+   window.GMP_CONFIG = Object.freeze({
+     apiBaseUrl: "https://gmp-closegap-api.<tài-khoản-cloudflare>.workers.dev"
+   });
+   ```
+4. Settings → Pages → Build and deployment → Deploy from a branch → `main`, `/ (root)` → Save.
+5. Chờ GitHub Pages triển khai xong. Mở link bằng cửa sổ riêng tư phải thấy màn hình đăng nhập; tạo Admin đầu tiên (mục 5), đăng nhập, tạo Finding thử, mở trên thiết bị thứ hai để xác nhận đồng bộ.
 
-GitHub Pages chỉ host giao diện tĩnh. Supabase mới lưu dữ liệu, xác thực và kiểm tra quyền. Mã giao diện có thể được tải xuống; quyền dữ liệu được thực thi trong database.
+GitHub Pages chỉ host giao diện tĩnh. Cloudflare Worker mới lưu dữ liệu, xác thực và kiểm tra quyền (JWT + kiểm tra `disabled`/`role` tươi từ D1 mỗi request — không có RLS khai báo như Postgres, mọi quyền được Worker tự kiểm tra tường minh trong code, xem `cloudflare/worker/src/`).
 
-## 3. Chuyển dữ liệu từ app cũ
+## 3. Chuyển dữ liệu từ app cũ (offline hoặc Supabase)
 
-- Mở bản offline trên đúng trình duyệt đang giữ dữ liệu, dùng Admin xuất bản sao lưu JSON.
-- Đăng nhập Admin ở bản web → Cài đặt → Phục hồi từ JSON. App tải một bản sao lưu trước khi nhập.
+- Mở bản cũ trên đúng trình duyệt đang giữ dữ liệu, dùng Admin xuất bản sao lưu JSON (nút **⬇️ Tải bản sao lưu**).
+- Đăng nhập Admin ở bản Cloudflare → Cài đặt → **⬆️ Phục hồi từ file .json**. App tải một bản sao lưu trước khi nhập.
 - Nhập là **gộp theo ID**: Finding cùng ID lấy nội dung file, Finding khác giữ nguyên. Bản ghi cùng ID vừa đổi trên máy khác sẽ báo xung đột, không tự ghi đè.
-- Tài khoản/mật khẩu và nhật ký cũ không được nhập thành tài khoản/nhật ký máy chủ. Ảnh nén có trong JSON được chuyển cùng Finding. Ảnh gốc Mediasave cũ cần giữ bản sao riêng; app không tự quét/di chuyển thư mục cũ.
-- Chỉ coi là hoàn tất khi thanh trạng thái báo **Đã đồng bộ Supabase** và kiểm tra trên thiết bị thứ hai.
+- Tài khoản/mật khẩu và nhật ký cũ **không** tự chuyển thành tài khoản/nhật ký máy chủ — tạo lại thủ công (mục 5). Ảnh nén có trong JSON được chuyển cùng Finding. Ảnh gốc lưu trong Storage/R2 cũ cần giữ bản sao riêng; app không tự quét/di chuyển.
+- Chỉ coi là hoàn tất khi thanh trạng thái báo **Đã đồng bộ** và kiểm tra trên thiết bị thứ hai.
 
 ## 4. Hành vi và giới hạn
 
 - Nhân viên: xem dữ liệu chung, tạo Finding, thêm/sửa/xoá Action Open, gửi Pending khi có ảnh. Action Pending/Closed được khoá với nhân viên. Admin: sửa Finding/cài đặt, duyệt/từ chối/mở lại và đánh dấu xoá.
 - Finding mới tối đa một Action. Admin được nhập Finding lịch sử có nhiều Action; không được tăng thêm số Action của Finding đã có nhiều Action.
-- Lưu sau khoảng 1,5 giây ngừng nhập; lấy dữ liệu từ máy khác mỗi 60 giây khi không nhập liệu. Nút Đồng bộ dùng khi muốn lấy/gửi ngay. Đây là polling, không phải realtime subscription. Vòng lấy dữ liệu tự động mỗi 60 giây chỉ tải bản ghi thay đổi kể từ lần đồng bộ trước (dựa trên `updated_at`), không tải lại toàn bộ dữ liệu mỗi lần — giảm dung lượng và thời gian đáng kể khi đã có nhiều Finding. Lần đăng nhập đầu tiên trên một máy hoặc bấm nút Đồng bộ thủ công vẫn tải đầy đủ để đối chiếu (safety net). Mạng vừa nối lại (wifi chập chờn, máy vừa thức dậy) chỉ đồng bộ phần thay đổi như vòng nền, không tải lại toàn bộ — để tránh tải lại mọi ảnh nhúng mỗi lần mạng gián đoạn rồi nối lại; có giới hạn tối đa 1 lần/phút để không dồn dập khi mạng chập chờn liên tục.
-- Mỗi trình duyệt chỉ một tab chỉnh sửa cho cùng tài khoản/project. Bản chờ trên máy tách theo project và tài khoản, lưu cùng phiên bản máy chủ trong một giao dịch IndexedDB.
-- Bản chờ giữ khi mất mạng; sau tải lại cần xác thực online để mở app. Không xóa cache trình duyệt nếu còn thay đổi chưa gửi. Không cam kết mở offline từ đầu.
+- Lưu sau khoảng 1,5 giây ngừng nhập; lấy dữ liệu từ máy khác mỗi 60 giây khi không nhập liệu. Nút Đồng bộ dùng khi muốn lấy/gửi ngay. Đây là polling, không phải realtime subscription. Vòng lấy dữ liệu tự động mỗi 60 giây chỉ tải bản ghi thay đổi kể từ lần đồng bộ trước (dựa trên `updated_at`), không tải lại toàn bộ dữ liệu mỗi lần. Lần đăng nhập đầu tiên trên một máy hoặc bấm nút Đồng bộ thủ công vẫn tải đầy đủ để đối chiếu (safety net); mạng vừa nối lại chỉ đồng bộ phần thay đổi như vòng nền (giới hạn tối đa 1 lần/phút).
+- Mỗi trình duyệt chỉ một tab chỉnh sửa cho cùng tài khoản. Bản chờ trên máy lưu cùng phiên bản máy chủ trong một giao dịch IndexedDB.
+- Bản chờ giữ khi mất mạng; sau tải lại cần xác thực online để mở app. Không xóa cache trình duyệt nếu còn thay đổi chưa gửi.
 - Xung đột không tự chọn bên thắng: tải hai bản để đối chiếu, chọn bản máy chủ, sau đó nhập lại thay đổi cần giữ. Bản chờ không tự ghi đè máy chủ.
-- Ảnh nén lưu dạng data URL trong JSONB để báo cáo Excel/HTML và backup vẫn hoạt động. Tối đa 20 MB mỗi Finding. Đây là lựa chọn tương thích cho quy mô nội bộ, chưa tối ưu cho kho ảnh rất lớn: mỗi Finding thay đổi vẫn gửi/nhận trọn vẹn ảnh nhúng trong đó (không tách phần ảnh riêng), phân trang tối đa 100 bản ghi/lượt gọi.
-- Ảnh gốc mới được tải riêng vào bucket private `gmp-mediasave`, tối đa 20 MiB/file; có thông báo khi lỗi. Tải ảnh gốc không có hàng đợi bền vững qua lần đóng trang: nếu tải thất bại, giữ file gốc và chọn lại ảnh khi mạng ổn định. Gỡ ảnh trong Finding không xóa bản sao gốc.
-- Nhật ký do máy chủ tự ghi với danh tính xác thực, hiển thị 20 mục gần nhất. Chỉ tải lại khi bấm Đồng bộ thủ công, lúc đăng nhập, hoặc khi đang mở đúng tab Data Input Log — vòng lấy dữ liệu nền không tự tải lại nhật ký nếu không ai đang xem, để giảm dung lượng. Máy chủ tự động xoá mục cũ hơn 7 ngày bằng tác vụ định kỳ (`pg_cron`, xem mục 6). Dấu xoá Finding vẫn giữ bản cũ trong database để tránh hồi sinh dữ liệu và hỗ trợ quản trị khôi phục — không liên quan đến nhật ký thao tác.
-- Đồng bộ thư mục, dọn file thiết bị cũ, mốc ngắt đồng bộ, tài khoản/mật khẩu local được thay thế trong bản web. Bản offline gốc giữ nguyên.
-- CSV vẫn xuất toàn bộ dữ liệu như bản gốc. Excel/HTML giữ các bộ lọc hiện có. Email chỉ tạo file .eml để người dùng tự kiểm tra/gửi trong Outlook.
+- **Xử lý lỗi khi đồng bộ** (rút ra từ một sự cố thật — xem [HANDOFF_WEB.md](HANDOFF_WEB.md)): lỗi xung đột (409) và lỗi quyền/dữ liệu (400/401/403) **không bao giờ tự gửi lại** — chỉ báo cho người dùng, chờ thao tác thủ công. Chỉ lỗi mạng/máy chủ (5xx) mới tự thử lại, tối đa 5 lần, giãn cách tăng dần (2s/4s/8s/16s/32s).
+- Ảnh nén lưu dạng data URL ngay trong bản ghi Finding/Action (D1) để báo cáo Excel/HTML và backup vẫn hoạt động độc lập. Tối đa 20 MB mỗi Finding.
+- Ảnh gốc tải riêng vào bucket private R2 `gmp-mediasave` (không tính phí băng thông tải xuống), tối đa 20 MiB/file. Khi traffic vượt ngưỡng (mục 9, Data & Egress Control ở trạng thái Protection), ảnh gốc được xếp hàng chờ (`Pending Media`) thay vì huỷ — ảnh nén trong Finding vẫn lưu bình thường, không mất dữ liệu.
+- Nhật ký do máy chủ tự ghi với danh tính xác thực, hiển thị 20 mục gần nhất. Chỉ tải lại khi bấm Đồng bộ thủ công, lúc đăng nhập, hoặc khi đang mở đúng tab Data Input Log. Máy chủ tự động xoá mục cũ hơn 7 ngày (Cron Trigger, xem mục 6).
+- CSV vẫn xuất toàn bộ dữ liệu. Excel/HTML giữ các bộ lọc hiện có. Email chỉ tạo file .eml để người dùng tự kiểm tra/gửi trong Outlook.
 
-## 5. Thiết lập Quản lý Người dùng (Admin User Management Setup)
+## 5. Quản lý người dùng
 
-Chức năng Quản lý Người dùng cho phép Admin tạo tài khoản nhân viên, đổi vai trò (User ↔ Admin), và vô hiệu hóa/kích hoạt tài khoản trực tiếp trên giao diện web mà không cần thao tác thủ công trong Supabase Dashboard hay SQL Editor.
+Không có form tự đăng ký — tài khoản đầu tiên tạo bằng script, các tài khoản sau Admin tự tạo trong app.
 
-### 5.1. Chạy SQL Migration
-Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260915_user_management.sql`, copy toàn bộ nội dung và bấm **Run**.
-Script này sẽ:
-- Thêm cột `disabled` vào bảng `gmp_members`.
-- Cập nhật các chính sách bảo mật RLS và hàm `gmp_save_record` để tự động chặn các tài khoản bị vô hiệu hóa.
+### 5.1. Tạo Admin đầu tiên
 
-### 5.2. Cách tạo tài khoản Admin đầu tiên (nếu chưa có)
-Nếu hệ thống chưa có tài khoản Admin nào:
-1. Vào **Authentication → Users → Add user → Create new user**, tạo email và mật khẩu cho Admin.
-2. Vào **SQL Editor**, chạy lệnh sau (thay `EMAIL_ADMIN_CUA_BAN` và tên thật):
-```sql
-insert into public.gmp_members(user_id, display_name, role, disabled)
-select id, 'Tên Quản Trị Viên', 'admin', false
-from auth.users where lower(email) = lower('EMAIL_ADMIN_CUA_BAN')
-on conflict(user_id) do update
-set display_name=excluded.display_name, role='admin', disabled=false;
-```
-
-### 5.3. Triển khai Edge Function `admin-users`
-Hệ thống sử dụng một Supabase Edge Function có tên `admin-users` (được lưu tại `supabase/functions/admin-users/index.ts`). Mọi thao tác đặc quyền được thực thi trên máy chủ và kiểm tra phân quyền độc lập.
-
-**Các bước triển khai bằng dòng lệnh (Terminal / PowerShell):**
 ```bash
-# 1. Đăng nhập tài khoản Supabase (chỉ cần làm lần đầu)
-npx supabase login
-
-# 2. Liên kết với project của bạn (thay mã project của bạn từ URL Supabase Dashboard)
-npx supabase link --project-ref ftxibcrwknqgazechmqc
-
-# 3. Triển khai Edge Function
-npx supabase functions deploy admin-users
+cd cloudflare/worker
+node create-first-admin.mjs "ten_dang_nhap_hoac_email" "mat_khau" "Họ và tên"
 ```
-*(Ghi chú: Các biến môi trường `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` được Supabase tự động cung cấp trong môi trường chạy của Edge Function, bạn không cần phải tự cấu hình).*
+Script in ra lệnh `wrangler d1 execute` — copy chạy trong cùng thư mục để tạo tài khoản.
 
-### 5.4. Kiểm tra hoạt động (Verification)
-1. **Kiểm tra quyền Admin:** Đăng nhập bằng tài khoản Admin. Bạn sẽ thấy tab `👥 Quản lý người dùng` xuất hiện trên thanh điều hướng. Mở tab ra sẽ thấy danh sách toàn bộ người dùng hiện có.
-2. **Kiểm tra Tạo người dùng:** Bấm nút `➕ Thêm người dùng`, điền Họ tên, Email, Mật khẩu (tối thiểu 6 ký tự), chọn vai trò `User` hoặc `Admin` và bấm `Tạo tài khoản`.
-3. **Kiểm tra Đổi vai trò:** Bấm `Nâng lên Admin` hoặc `Hạ xuống User` ở cột Thao tác, xác nhận hộp thoại để hoàn tất.
-4. **Kiểm tra Vô hiệu hóa:** Bấm `Vô hiệu hóa` để khóa tài khoản một nhân viên. Khi bị khóa, tài khoản đó không thể đăng nhập hoặc lưu dữ liệu; dữ liệu lịch sử và Audit Log vẫn được bảo toàn nguyên vẹn. Bấm `Kích hoạt` để mở khóa lại.
-5. **Kiểm tra tài khoản User thường:** Đăng nhập bằng tài khoản vừa tạo (role = `user`). Tab `👥 Quản lý người dùng` hoàn toàn bị ẩn; nếu cố tình gõ lệnh `switchTab('users')` từ Console, hệ thống sẽ cảnh báo và chặn lại ngay lập tức.
+### 5.2. Quản lý từ trong app
 
-## 6. Tự động xoá nhật ký thao tác cũ (Audit Log Retention)
+Đăng nhập Admin → tab **👥 Quản lý người dùng**:
+- **➕ Thêm người dùng**: chọn vai trò User hiện ô **Tên đăng nhập** (chữ thường/số, có thể chứa `. _ -`); vai trò Admin hiện ô **Email**. Cả hai chỉ là `login_id` lưu thẳng trong D1 — không có hack email nội bộ nào (khác Supabase Auth, D1 không bắt buộc định dạng email).
+- **Nâng lên Admin / Hạ xuống User**, **Vô hiệu hóa / Kích hoạt**: đổi ngay lập tức, có chặn tự hạ quyền nếu là Admin hoạt động cuối cùng và chặn tự khoá chính mình.
+- Mọi thao tác đi qua route `/admin/users/*` trong cùng Worker đã deploy ở mục 1 — không cần deploy riêng gì thêm khi thêm/sửa tài khoản.
 
-Nhật ký thao tác (`gmp_audit`) không có quyền xoá từ trình duyệt (RLS chỉ cho `select`), để không ai — kể cả Admin qua giao diện — chỉnh sửa được lịch sử thao tác. Việc dọn dữ liệu cũ chạy định kỳ trên máy chủ bằng `pg_cron`.
+## 6. Dọn dẹp dữ liệu cũ tự động (Cron Trigger)
 
-Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260916_audit_retention.sql`, copy toàn bộ nội dung và bấm **Run**. Script này sẽ:
-- Tạo index trên cột `ts` để tăng tốc truy vấn/nhật ký.
-- Bật extension `pg_cron` (nếu chưa bật).
-- Lên lịch chạy hằng ngày lúc 03:00 UTC, xoá mọi mục nhật ký cũ hơn 7 ngày.
-
-Có thể kiểm tra job đã chạy tại SQL Editor bằng `select * from cron.job;` và `select * from cron.job_run_details order by start_time desc limit 20;`.
+`gmp_audit` (nhật ký, giữ 7 ngày) và `gmp_traffic_daily` (số liệu Egress theo ngày, giữ 14 ngày) tự động dọn hằng ngày lúc 03:00 UTC — khai báo sẵn trong [`wrangler.toml`](cloudflare/worker/wrangler.toml) (`[triggers]`), chạy trong `scheduled()` của [`src/index.js`](cloudflare/worker/src/index.js). Không cần thiết lập gì thêm — có hiệu lực ngay khi `wrangler deploy`.
 
 ## 7. Đồng bộ tăng trưởng (Incremental Sync)
 
-Vòng đồng bộ nền mỗi 60 giây chỉ tải bản ghi có `updated_at` mới hơn lần đồng bộ gần nhất, thay vì tải lại toàn bộ `gmp_records` (kể cả ảnh nhúng) mỗi lần — giảm mạnh dung lượng và thời gian cho các lần đồng bộ định kỳ khi dữ liệu đã lớn. Lần đăng nhập đầu tiên trên một máy hoặc bấm nút Đồng bộ thủ công vẫn tải đầy đủ để tự đối chiếu, phòng trường hợp dữ liệu máy bị lệch — mạng vừa nối lại chỉ đồng bộ phần thay đổi (không tải lại toàn bộ) vì đây là tình huống xảy ra thường xuyên hơn nhiều (wifi chập chờn, máy ngủ/thức) và từng là nguồn tốn băng thông đáng kể khi tải lại mọi ảnh nhúng mỗi lần; giới hạn tối đa 1 lần/phút để tránh dồn dập khi mạng chập chờn liên tục.
+Vòng đồng bộ nền mỗi 60 giây chỉ tải bản ghi có `updated_at` mới hơn lần đồng bộ gần nhất (index sẵn trong `schema.sql`), thay vì tải lại toàn bộ `gmp_records` mỗi lần — giảm mạnh số row D1 phải đọc và dung lượng truyền khi dữ liệu đã lớn. Lần đầu trên máy mới, bấm Đồng bộ thủ công, hoặc mạng vừa nối lại vẫn đối chiếu đầy đủ để tự sửa sai lệch nếu có.
 
-Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260917_incremental_sync.sql`, copy toàn bộ nội dung và bấm **Run**. Script này tạo index trên cột `updated_at` của `gmp_records` để truy vấn tăng trưởng nhanh.
+## 8. Đăng nhập bằng Tên đăng nhập hoặc Email
 
-## 8. Đăng nhập bằng Tên đăng nhập (không cần email cho User)
+Nhân viên đăng nhập bằng **Tên đăng nhập + mật khẩu**; Admin có thể dùng Tên đăng nhập hoặc **Email + mật khẩu** — cả hai chỉ là `login_id` lưu trực tiếp trong bảng `users` (D1), không có hack quy đổi email nội bộ nào (đó chỉ là giải pháp bắt buộc hồi còn dùng Supabase Auth). Mật khẩu băm bằng **PBKDF2-SHA256, 100.000 vòng lặp** (mức trần cứng của Cloudflare Workers — Web Crypto ở đây từ chối số vòng lặp cao hơn) qua Web Crypto, không dùng thư viện ngoài.
 
-Nhân viên đăng nhập bằng **Tên đăng nhập + mật khẩu**, không cần địa chỉ email. Admin vẫn đăng nhập bằng **Email + mật khẩu** như trước. Đây vẫn là tài khoản Supabase Auth thật với mật khẩu riêng — không phải "chọn tên không cần mật khẩu" — mỗi thao tác vẫn truy vết đúng người thật vì Supabase Auth chỉ hỗ trợ đăng nhập bằng email/số điện thoại, tài khoản Tên đăng nhập được lưu với một email nội bộ tự sinh (`<tên_đăng_nhập>@<mã-project>.users.internal`, không gửi thư, không ai nhìn thấy hay gõ giá trị này) — trình duyệt tự quy đổi Tên đăng nhập sang email nội bộ này trước khi gọi Supabase.
+Phiên đăng nhập là JWT tự ký (HS256, hạn 30 ngày) — nhưng token chỉ chứng minh danh tính, **mọi request đều tự tra lại `disabled`/`role` tươi từ D1**, nên khoá tài khoản có hiệu lực ngay lập tức bất kể token còn hạn.
 
-**Cần làm:**
-1. Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260918_username_login.sql`, copy toàn bộ nội dung và bấm **Run**. Script này thêm cột `username` vào `gmp_members`.
-2. Triển khai lại Edge Function đã cập nhật:
-   ```bash
-   npx supabase functions deploy admin-users
-   ```
-3. Vào tab **👥 Quản lý người dùng → ➕ Thêm người dùng**: chọn vai trò **User** sẽ hiện ô **Tên đăng nhập** (chữ thường/số, có thể chứa `. _ -`, không dấu/khoảng trắng) thay cho Email; chọn vai trò **Admin** vẫn hiện ô **Email** như cũ.
-4. Tài khoản Admin/User đã tạo từ trước (bằng email) không bị ảnh hưởng, vẫn đăng nhập bằng email như cũ — script chỉ áp dụng cho tài khoản tạo mới bằng Tên đăng nhập.
+## 9. Data & Egress Control
 
-## 9. Data & Egress Control (kiểm soát lưu lượng Supabase)
+Admin tự kiểm soát lưu lượng app tạo ra mỗi ngày ngay trong app, tại **⚙️ Cài đặt → 🛡️ Data & Egress Control**. Có 3 trạng thái, tự động, không bao giờ khoá việc ghi nhận Finding/Action:
 
-Admin tự kiểm soát lưu lượng Supabase app tạo ra mỗi ngày ngay trong app, tại **⚙️ Cài đặt → 🛡️ Data & Egress Control**, không cần chờ đụng trần Supabase mới biết. Có 3 trạng thái, tự động, không bao giờ khoá việc ghi nhận Finding/Action:
-
-- **🟢 Normal** (traffic < Soft Limit): hoạt động như bình thường, không đổi gì.
+- **🟢 Normal** (traffic < Soft Limit): hoạt động như bình thường.
 - **🟠 Data Saving** (Soft ≤ traffic < Hard): giãn vòng đồng bộ nền từ 60s lên 180s. Nghiệp vụ chính không đổi.
-- **🔴 Protection** (traffic ≥ Hard + Extra hôm nay, trừ khi đang Unlock): dừng hẳn vòng đồng bộ nền (chỉ còn đồng bộ khi có thay đổi thật + bấm "Đồng bộ" thủ công), tạm dừng tải Data Input Log nền, và **tạm hoãn upload ảnh gốc** lên Storage `gmp-mediasave` (ảnh nén vẫn lưu trong Finding/Action bình thường — không mất ảnh, không mất Action, chỉ ảnh gốc chờ tải lên sau).
+- **🔴 Protection** (traffic ≥ Hard + Extra hôm nay, trừ khi đang Unlock): dừng hẳn vòng đồng bộ nền, tạm dừng tải Data Input Log nền, và **tạm hoãn upload ảnh gốc** lên R2 (ảnh nén vẫn lưu trong Finding/Action bình thường — không mất ảnh, không mất Action, chỉ ảnh gốc chờ tải lên sau, xem `Pending Media` ở mục 4).
 
-Soft/Hard Limit (mặc định 100/200 MB), bật/tắt Protection, "+ Extra MB Today" và "Unlock Today" đều là cấu hình chỉ Admin sửa được, đồng bộ tự động giữa các máy (nằm trong `SETTINGS`, đã được `gmp_save_record` bắt buộc quyền Admin sẵn — không cần RPC riêng). **Extra MB** và **Unlock Today** chỉ có hiệu lực trong ngày hiện tại, tự hết hiệu lực khi sang ngày mới (không cần thao tác gì thêm); Soft/Hard Limit thì giữ nguyên qua các ngày cho tới khi Admin đổi lại.
+Soft/Hard Limit (mặc định 100/200 MB), bật/tắt Protection, "+ Extra MB Today" và "Unlock Today" đều là cấu hình chỉ Admin sửa được, đồng bộ tự động giữa các máy (nằm trong `SETTINGS`, ghi qua route `/records` vốn đã bắt buộc quyền Admin cho `kind='settings'`). **Extra MB** và **Unlock Today** chỉ có hiệu lực trong ngày hiện tại, tự hết hiệu lực khi sang ngày mới; Soft/Hard Limit giữ nguyên qua các ngày cho tới khi Admin đổi lại.
 
-Traffic hiển thị là **ước tính riêng của app này** (đo qua kích thước request/response thật khi đồng bộ — không phải số Egress chính xác trên hoá đơn Supabase), tổng hợp từ nhiều máy bằng cách mỗi máy tự báo cáo tổng byte của mình theo ngày (gộp vào nhịp đồng bộ có sẵn, không tạo request riêng chỉ để đo).
-
-**Cần làm:** Vào **Supabase Dashboard → SQL Editor**, mở file `supabase/migrations/20260924_egress_control.sql`, copy toàn bộ nội dung và bấm **Run**. Script tạo bảng `gmp_traffic_daily` + RPC `gmp_report_traffic`, dùng `pg_cron` đã bật từ mục 6 để tự dọn dữ liệu traffic cũ hơn 14 ngày (không cần bật lại `pg_cron`).
+Traffic hiển thị là **ước tính riêng của app này** (đo qua kích thước request/response thật khi đồng bộ, không phải số liệu chính xác trên hoá đơn Cloudflare — lưu ý R2 không tính phí băng thông tải xuống, nên phần chi phí thực tế trên Cloudflare thường lệch sang số lượng request/row D1 hơn là băng thông), tổng hợp từ nhiều máy bằng cách mỗi máy tự báo cáo tổng byte của mình theo ngày (gộp vào nhịp đồng bộ có sẵn, không tạo request riêng chỉ để đo).
 
 ---
 
-## Kiểm tra trước bàn giao
+## Cấu trúc thư mục
 
-SQL được thực thi trong PostgreSQL WASM (PGlite) với schema Auth/Storage mô phỏng: đã kiểm tra quyền khách, người ngoài, nhân viên/Admin, revision conflict, xoá/khôi phục, ảnh không hợp lệ, ghi nhật ký.
-Luồng trình duyệt được kiểm tra bằng jsdom + IndexedDB mô phỏng + Supabase mock: đăng nhập, khởi động, lưu, mất mạng/tải lại, giữ xung đột và chọn bản máy chủ.
-Chưa kiểm thử end-to-end với Supabase/GitHub thật vì chưa có project/repository.
+- [index.html](index.html) — giao diện + toàn bộ logic nghiệp vụ (single-file, chuyển thể từ app offline).
+- [cloud.js](cloud.js) — cầu nối tới Worker: xác thực, đồng bộ incremental, optimistic concurrency theo `revision`, upload ảnh gốc, Data & Egress Control.
+- [config.js](config.js) — chỉ chứa `apiBaseUrl` công khai, không có khoá bí mật nào.
+- `cloudflare/worker/` — mã nguồn Worker (`src/*.js`), schema D1 (`schema.sql`), cấu hình (`wrangler.toml`), script tạo Admin đầu tiên (`create-first-admin.mjs`).
+- `cloudflare/README.md` — ghi chú kỹ thuật/lệnh thao tác nhanh cho riêng phần Worker.
 
-Tài liệu chính thức: [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), [Supabase Auth](https://supabase.com/docs/guides/auth/passwords), [Supabase Edge Functions](https://supabase.com/docs/guides/functions), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security).
+## Kiểm tra trước bàn giao (gần nhất)
 
+Đã kiểm thử trực tiếp trên hạ tầng Cloudflare thật (không phải giả lập): đăng nhập, tạo/sửa/xoá Finding qua UI thật, phát hiện xung đột revision, phân quyền Admin/User, upload ảnh lên R2, CORS đúng origin, toàn bộ 20 tài khoản thật đã tạo và đăng nhập được, 394 Finding đã phục hồi từ backup JSON. Chi tiết lịch sử di chuyển và các lần kiểm thử: [HANDOFF_WEB.md](HANDOFF_WEB.md).
+
+Tài liệu chính thức: [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), [Cloudflare Workers](https://developers.cloudflare.com/workers/), [Cloudflare D1](https://developers.cloudflare.com/d1/), [Cloudflare R2](https://developers.cloudflare.com/r2/).

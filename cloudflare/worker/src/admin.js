@@ -1,6 +1,6 @@
-// Port of supabase/functions/admin-users/index.ts. Same actions, same guard rails (can't
-// demote the sole active admin, can't disable yourself). No synthetic-email trick needed —
-// login_id is stored as typed (Username or Email, Admin's choice), see schema.sql.
+// Admin-only user management: create/list accounts, change role, enable/disable. Same guard
+// rails as always (can't demote the sole active admin, can't disable yourself). login_id is
+// stored exactly as typed (Username or Email, Admin's choice) — see schema.sql.
 import { json, err, nowISO } from "./util.js";
 import { authenticate, requireAdmin, createUserRow } from "./auth.js";
 
