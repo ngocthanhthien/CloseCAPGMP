@@ -181,7 +181,7 @@ table.data tr:hover td{background:#f7fbfa}
   <div class="datechip" id="todayChip">—</div>
 </div>
 <div id="syncPermWarnBanner" style="display:none;background:#fff3cd;color:#7a5b00;border-bottom:2px solid #f0c419;padding:8px 16px;font-size:12.5px;font-weight:700;text-align:center;cursor:pointer" title="Bấm để đồng bộ lại và cấp lại quyền truy cập thư mục"></div>
-<div id="cloudBanner" role="status" aria-live="polite"><span id="cloudBannerText">Đang kết nối Supabase…</span><span id="cloudTrafficBadge" style="margin-left:10px;font-weight:700"></span></div>
+<div id="cloudBanner" role="status" aria-live="polite"><span id="cloudBannerText">Đang kết nối Cloudflare…</span><span id="cloudTrafficBadge" style="margin-left:10px;font-weight:700"></span></div>
 <div class="tabs" id="tabsBar">
   <div class="tab active" data-tab="dash">🏠 Tổng quan</div>
   <div class="tab" data-tab="action">🛠️ Đóng Gap (Owner)<span class="tabBadge" id="badgeAction" style="display:none"></span></div>
@@ -440,7 +440,7 @@ table.data tr:hover td{background:#f7fbfa}
   <div class="view" id="view-log">
     <div class="card">
       <h2>🕒 Data Input Log — Nhật ký cập nhật dữ liệu</h2>
-      <div class="hint">Theo dõi <b>User</b>, <b>Máy tính</b> và <b>thời gian</b> mỗi lần dữ liệu được tạo/sửa/xoá/đồng bộ — giúp biết ai vừa thay đổi dữ liệu, gần như theo thời gian thực. Nhật ký cập nhật được ghi bởi máy chủ Supabase; danh sách hiển thị tối đa 1.000 mục gần nhất.</div>
+      <div class="hint">Theo dõi <b>User</b>, <b>Máy tính</b> và <b>thời gian</b> mỗi lần dữ liệu được tạo/sửa/xoá/đồng bộ — giúp biết ai vừa thay đổi dữ liệu, gần như theo thời gian thực. Nhật ký cập nhật được ghi bởi máy chủ Cloudflare; danh sách hiển thị tối đa 20 mục gần nhất.</div>
       <div class="field" style="max-width:420px;margin:10px 0 14px">
         <label>🖥️ Máy tính này — ID: <span id="logDeviceIdChip" style="font-weight:700"></span></label>
         <div style="display:flex;gap:6px">
@@ -501,7 +501,7 @@ table.data tr:hover td{background:#f7fbfa}
     </div>
     <div class="card">
       <h3 class="sec">🛡️ Data &amp; Egress Control</h3>
-      <div class="hint">Chỉ Admin thấy và chỉnh được mục này. Ước tính lưu lượng Supabase app tạo ra mỗi ngày và tự giảm tải khi gần/vượt hạn mức — <b>không bao giờ khoá việc ghi nhận Finding/Action</b>, chỉ tạm hoãn ảnh gốc, đồng bộ nền và Data Input Log khi cần.</div>
+      <div class="hint">Chỉ Admin thấy và chỉnh được mục này. Ước tính lưu lượng app tạo ra trên Cloudflare mỗi ngày và tự giảm tải khi gần/vượt hạn mức — <b>không bao giờ khoá việc ghi nhận Finding/Action</b>, chỉ tạm hoãn ảnh gốc, đồng bộ nền và Data Input Log khi cần.</div>
       <div class="row" style="margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:6px;font-weight:600"><input type="checkbox" id="egressEnabled"> Egress Protection</label>
         <span id="egressStateBadge" style="font-weight:700"></span>
@@ -544,7 +544,7 @@ table.data tr:hover td{background:#f7fbfa}
     </div>
     <div class="card">
       <h3 class="sec">💾 Sao lưu &amp; phục hồi dữ liệu</h3>
-      <div class="hint">Finding, Action và ảnh nén được lưu trên Supabase sau khi đồng bộ thành công; IndexedDB giữ bản cục bộ khi mất mạng. Nên tải bản sao lưu định kỳ để tránh mất dữ liệu khi xoá cache trình duyệt. Nút <b>"Xoá toàn bộ dữ liệu"</b> đưa app về trạng thái <b>trắng hoàn toàn</b> (không Finding; tài khoản Supabase giữ nguyên) — KHÔNG tự nạp lại dữ liệu mẫu; muốn có dữ liệu trở lại thì dùng <b>"Phục hồi từ file .json"</b> ở trên.</div>
+      <div class="hint">Finding, Action và ảnh nén được lưu trên Cloudflare (D1) sau khi đồng bộ thành công; IndexedDB giữ bản cục bộ khi mất mạng. Nên tải bản sao lưu định kỳ để tránh mất dữ liệu khi xoá cache trình duyệt. Nút <b>"Xoá toàn bộ dữ liệu"</b> đưa app về trạng thái <b>trắng hoàn toàn</b> (không Finding; tài khoản giữ nguyên) — KHÔNG tự nạp lại dữ liệu mẫu; muốn có dữ liệu trở lại thì dùng <b>"Phục hồi từ file .json"</b> ở trên.</div>
       <div class="row">
         <button class="btn" id="backupBtn">⬇️ Tải bản sao lưu (.json)</button>
         <label class="btn gray" style="cursor:pointer">⬆️ Phục hồi từ file .json<input type="file" accept=".json" id="restoreInput" style="display:none"></label>
@@ -555,7 +555,7 @@ table.data tr:hover td{background:#f7fbfa}
 
   <!-- ===================== ĐỒNG BỘ ===================== -->
   <div class="view" id="view-sync">
-  <div class="card"><h2>☁️ Đồng bộ Supabase</h2>
+  <div class="card"><h2>☁️ Đồng bộ Cloudflare</h2>
     <p>Dữ liệu được gửi tự động sau khi lưu và cập nhật từ máy khác mỗi 30 giây khi bạn không nhập liệu. Khi mất mạng, thay đổi chờ trên máy này.</p>
     <p id="cloudSyncStatus" role="status" aria-live="polite">Đang kết nối…</p>
     <button class="btn" id="oneClickSyncBtn">🔄 Đồng bộ ngay</button>
@@ -607,10 +607,10 @@ table.data tr:hover td{background:#f7fbfa}
   <h2>📖 Hướng dẫn bản web</h2>
   <p>Nhân viên đăng nhập bằng Tên đăng nhập + mật khẩu do Admin cấp (không cần email). Admin đăng nhập bằng Email + mật khẩu. Tài khoản phải có trong danh sách thành viên được duyệt.</p>
   <p>Ghi nhận Finding → thêm tối đa một Action → bổ sung PIC, hạn xử lý và ảnh → gửi xác nhận. Admin/QA duyệt, từ chối hoặc mở lại Finding.</p>
-  <p>Thanh trạng thái cho biết thay đổi đã lên Supabase hay còn chờ gửi. Nếu có xung đột, tải bản sao lưu để đối chiếu trước khi chọn bản trên máy chủ.</p>
+  <p>Thanh trạng thái cho biết thay đổi đã lên Cloudflare hay còn chờ gửi. Nếu có xung đột, tải bản sao lưu để đối chiếu trước khi chọn bản trên máy chủ.</p>
   <p>Dữ liệu cũ trong file HTML không tự chuyển lên web. Admin xuất JSON từ app cũ, rồi nhập tại Cài đặt. Tài khoản và mật khẩu cũ không được nhập.</p>
   <p>Xuất Excel, CSV, báo cáo HTML và email .eml vẫn dùng như trước. CSV xuất toàn bộ Finding; Excel và HTML theo bộ lọc hiện có.</p>
-  <p>Ảnh gốc nằm trong Supabase Storage → gmp-mediasave (riêng tư). JSON sao lưu chứa ảnh nén, không bao gồm ảnh gốc trong Storage.</p>
+  <p>Ảnh gốc nằm trong Cloudflare R2 → gmp-mediasave (riêng tư). JSON sao lưu chứa ảnh nén, không bao gồm ảnh gốc trong R2.</p>
 </div></div>
 
 </div>
@@ -819,7 +819,7 @@ async function fetchAndRenderUsers(){
       banner.style.display = "block";
       banner.style.background = "#fee2e2";
       banner.style.color = "#b91c1c";
-      banner.textContent = "Không thể tải danh sách người dùng: " + err.message + ". Vui lòng kiểm tra Supabase Edge Function đã được deploy theo README.";
+      banner.textContent = "Không thể tải danh sách người dùng: " + err.message + ". Vui lòng kiểm tra Cloudflare Worker đã được deploy theo cloudflare/README.md.";
     }
     tbody.innerHTML = `<tr><td colspan="5" style="padding:24px 12px;text-align:center;color:var(--red)">Lỗi: ${esc(err.message)}</td></tr>`;
   } finally {
@@ -960,7 +960,7 @@ function fmtDateTime(ts){
 
 function compressImageFile(file, maxW, quality, meta){
   maxW = maxW || 900; quality = quality || 0.68;
-  // Backup bản gốc lên Supabase Storage chạy song song, không chờ/không chặn việc nén ảnh chính
+  // Backup bản gốc lên Cloudflare R2 chạy song song, không chờ/không chặn việc nén ảnh chính
   // (xem backupMediaFile). meta ({findingId,actionId,mediaType}) chỉ dùng để gắn nhãn ảnh gốc
   // nếu bị xếp hàng chờ do Data & Egress Control (Protection) — không ảnh hưởng việc nén/lưu.
   backupMediaFile(file, meta);
@@ -4012,7 +4012,7 @@ async function boot(){
     }
   });
 }
-// boot is called only after Supabase validates authentication and membership.
+// boot is called only after the Cloudflare Worker validates authentication and membership.
 </script>
 <script src="config.js?v=20260930-cf1"></script>
 <script src="cloud.js?v=20260930-cf1"></script>
