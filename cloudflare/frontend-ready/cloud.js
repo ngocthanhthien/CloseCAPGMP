@@ -1,9 +1,8 @@
-/* Cloudflare bridge — replaces the Supabase bridge (cloud.js) with the same architecture,
-   same window.GMPCloud contract, same local-first/optimistic-concurrency/incremental-sync
-   design, talking to the Cloudflare Worker API (cloudflare/worker/) instead of Supabase.
-   NOT YET LIVE — staged in cloudflare/frontend-ready/ until cutover is confirmed. To cut
-   over: copy this file and config.js over the live cloud.js/config.js (or repoint the
-   <script src> in index.html), bump the cache-busting ?v=, and publish. */
+/* Cloudflare bridge — replaces the retired Supabase bridge. Same architecture, same
+   window.GMPCloud contract, same local-first/optimistic-concurrency/incremental-sync
+   design, talking to the Cloudflare Worker API (see cloudflare/worker/) instead of
+   Supabase. The retired Supabase-based version lives in git history (before the
+   2026-09-30 cutover commit) and in cloudflare/README.md's notes if ever needed again. */
 (() => {
   'use strict';
   const clone = value => structuredClone(value);
@@ -15,6 +14,10 @@
   const defaults = clone(SETTINGS);
   const areaDefaults = AREAS.map(a => ({code:a.code, pic:a.pic}));
   let started = false, starting = false, timer, bases = {}, conflicts = new Map(), accessGranted=false;
+  // Non-retryable per-record client errors (400 invalid / 403 forbidden) — kept separate from
+  // conflicts (409) since the resolution is different (fix or discard the local edit, not
+  // "pick a version"). Never auto-retried; only cleared by an explicit manual sync.
+  let blocked = new Map();
   let durable = true, saveChain = Promise.resolve(), mediaPending = 0, mediaErrors = 0;
   let syncedAt = '';
   let releaseLock;
@@ -65,12 +68,33 @@
     addTraffic(reqBytes + resBytes);
     return res;
   }
+  // Retry policy learned from a real incident on the old backend: a business-logic error
+  // (conflict/forbidden/invalid) got misclassified as "transient, safe to retry" and was
+  // retried automatically ~100x/second for 3+ hours, pegging the server at 99% CPU. Rule,
+  // enforced here for every call in the app:
+  //   - 409 (conflict), 400/401/403 (client/business error): NEVER retried here — the
+  //     caller decides what to do (see the sync() push loop below), but this function must
+  //     not loop on them itself.
+  //   - Network failure or 5xx (genuinely transient): retry up to 5 times with exponential
+  //     backoff (2s,4s,8s,16s,32s), then give up and let the caller handle it.
+  const MAX_RETRIES = 5;
   async function apiCall(path, options = {}) {
-    const res = await meteredFetch(path, options);
-    let body = null;
-    try { body = await res.json(); } catch {}
-    if(!res.ok) throw new Error((body && body.error) || ('HTTP '+res.status));
-    return body;
+    for(let retry = 0; ; retry++) {
+      let res, netErr;
+      try { res = await meteredFetch(path, options); } catch(e) { netErr = e; }
+      if(!netErr) {
+        let body = null;
+        try { body = await res.json(); } catch {}
+        if(res.ok) return body;
+        const e = new Error((body && body.error) || ('HTTP '+res.status));
+        e.status = res.status;
+        const retryable = res.status >= 500;
+        if(!retryable || retry >= MAX_RETRIES) throw e;
+      } else if(retry >= MAX_RETRIES) {
+        throw netErr;
+      }
+      await new Promise(r=>setTimeout(r, 1000 * Math.pow(2, retry+1)));
+    }
   }
   function egressConfig() {
     const d = {enabled:true,softLimitMB:100,hardLimitMB:200,extraTodayMB:0,extraDate:'',unlockToday:false,unlockDate:''};
@@ -213,11 +237,10 @@
   }
   async function uploadOriginal(file, name) {
     const safe = String(name||'media').replace(/[^a-zA-Z0-9._-]/g,'_');
-    const res = await meteredFetch('/media/upload?name='+encodeURIComponent(safe), {
+    // File/Blob bodies can be re-read on each retry attempt — safe to route through apiCall.
+    await apiCall('/media/upload?name='+encodeURIComponent(safe), {
       method:'PUT', headers:{'Content-Type':file.type}, body:file
     });
-    let body = null; try { body = await res.json(); } catch {}
-    if(!res.ok) throw new Error((body && body.error) || ('HTTP '+res.status));
   }
   async function sync(silent = false, skipMemberCheck = false, forceFull = false) {
     if(!started || syncing) return;
@@ -227,9 +250,14 @@
       await saveChain;
       if(!skipMemberCheck) await member();
       status('Đang đồng bộ…');
+      // Manual sync (forceFull) is the one explicit "try again" a person can ask for — clear
+      // previously-blocked items so this cycle re-attempts them (e.g. an Admin just fixed the
+      // permission issue). The automatic background poll never does this — it must never
+      // silently retry a business error on its own (see apiCall()'s retry-policy comment).
+      if(forceFull) blocked.clear();
       let watermark = syncedAt;
       for(const change of pending()) {
-        if(conflicts.has(change.key)) continue;
+        if(conflicts.has(change.key) || blocked.has(change.key)) continue;
         const sent = clone(localValue(change.kind,change.id));
         let data, error;
         try {
@@ -239,7 +267,16 @@
           })});
         } catch(e) { error = e; }
         if(error) {
-          if(error.message.includes('GMP_CONFLICT')) { conflicts.set(change.key,null); continue; }
+          // 409: real conflict — let the person pick a version via renderConflicts(), never
+          // resend automatically. 401: the whole session died, not just this record — lock the
+          // app instead of treating it as a per-record problem. 400/403: this exact record/
+          // action will keep failing no matter how many times we resend it unmodified — mark it
+          // blocked so routine polling stops hammering it, matching the incident's lesson.
+          // Anything else (network/5xx — apiCall() already retried those) aborts this sync
+          // cycle; the next natural cycle picks up where this left off.
+          if(error.status===409) { conflicts.set(change.key,null); continue; }
+          if(error.status===401) { lock('Phiên đăng nhập đã hết hạn. Hãy tải lại trang và đăng nhập.'); throw error; }
+          if(error.status===400 || error.status===403) { blocked.set(change.key,error.message); continue; }
           throw error;
         }
         bases[change.key] = clone(data);
@@ -273,13 +310,14 @@
       renderConflicts();
       const count = pending().length;
       const pendingMediaNote = pendingMedia.length ? ` ${pendingMedia.length} ảnh gốc đang chờ (Data Saving/Protection).` : '';
+      const blockedNote = blocked.size ? ` ${blocked.size} thay đổi bị từ chối — sửa lại rồi bấm Đồng bộ để thử lại.` : '';
       status(conflicts.size ? `Có ${conflicts.size} xung đột. Vào Đồng bộ để đối chiếu; bản trên máy vẫn được giữ.` :
         count ? `Còn ${count} thay đổi chờ gửi.` :
         `Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')}.` +
         (mediaPending ? ` ${mediaPending} ảnh gốc đang tải.` : '') +
         (mediaErrors ? ` ${mediaErrors} ảnh gốc chưa tải được; ảnh nén vẫn lưu trong Finding.` : '') +
-        pendingMediaNote,
-        !!(count || conflicts.size || mediaErrors || pendingMedia.length));
+        pendingMediaNote + blockedNote,
+        !!(count || conflicts.size || mediaErrors || pendingMedia.length || blocked.size));
     } catch(error) {
       status('Chưa đồng bộ: '+error.message+'. Bản chờ trên máy được giữ; bấm Đồng bộ để thử lại.',true);
     } finally { syncing=false; }
@@ -326,7 +364,14 @@
   async function member() {
     let me;
     try { me = await apiCall('/me'); }
-    catch(e) { lock('Phiên đăng nhập đã hết hạn. Hãy tải lại trang và đăng nhập.'); throw e; }
+    catch(e) {
+      // Only an actual 401 means "log in again". A network blip or 5xx (apiCall() already
+      // retried those up to 5x) doesn't mean the session is invalid — locking the whole app
+      // out over a transient connectivity issue would be misleading and would force a re-
+      // login that isn't actually needed. Let sync()'s normal "Chưa đồng bộ" status handle it.
+      if(e.status===401 || e.status===403) lock(e.status===403 ? e.message : 'Phiên đăng nhập đã hết hạn. Hãy tải lại trang và đăng nhập.');
+      throw e;
+    }
     if(api.cacheId && !api.cacheId.endsWith('_'+me.id)) {
       lock('Tài khoản đã thay đổi. Tải lại trang để mở dữ liệu đúng tài khoản.');
       throw new Error('Tài khoản đã thay đổi; cần tải lại trang');
@@ -338,6 +383,9 @@
   }
   function lock(message) {
     accessGranted=false;
+    // Stop the background poll — an expired/revoked session must not keep silently hitting
+    // the API every cycle forever (see apiCall()'s retry-policy comment above).
+    clearTimeout(pollTimer);
     $('#appShell').hidden=true; $('#loginOverlay').style.display='flex';
     $('#loginErr').textContent=message; $('#cloudSignOut').hidden=false;
     $$('.modalOverlay').forEach(el=>el.classList.remove('show'));

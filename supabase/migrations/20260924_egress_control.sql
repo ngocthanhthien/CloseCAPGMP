@@ -30,12 +30,12 @@ create or replace function public.gmp_report_traffic(p_date text, p_device text,
 returns void language plpgsql security definer set search_path = '' as $$
 begin
   if not exists(select 1 from public.gmp_members where user_id=auth.uid() and not coalesce(disabled,false)) then
-    raise exception 'GMP_FORBIDDEN: approved membership required' using errcode='42501';
+    raise exception 'GMP_FORBIDDEN: approved membership required' using errcode='PT403';
   end if;
   if p_date is null or p_date !~ '^\d{4}-\d{2}-\d{2}$'
     or p_device is null or length(p_device)=0
     or p_bytes is null or p_bytes<0 then
-    raise exception 'GMP_INVALID: bad traffic report';
+    raise exception 'GMP_INVALID: bad traffic report' using errcode='PT400';
   end if;
   -- greatest(): the client reports its own cumulative total for the day, not a delta, so a
   -- retried or out-of-order call can never move the counter backwards.
