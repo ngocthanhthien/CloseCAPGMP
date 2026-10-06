@@ -119,6 +119,6 @@ Traffic hiển thị là **ước tính riêng của app này** (đo qua kích t
 
 ## Kiểm tra trước bàn giao (gần nhất)
 
-Đã kiểm thử trực tiếp trên hạ tầng Cloudflare thật (không phải giả lập): đăng nhập, tạo/sửa/xoá Finding qua UI thật, phát hiện xung đột revision, phân quyền Admin/User, upload ảnh lên R2, CORS đúng origin, toàn bộ 20 tài khoản thật đã tạo và đăng nhập được, 394 Finding đã phục hồi từ backup JSON. Chi tiết lịch sử di chuyển và các lần kiểm thử: [HANDOFF_WEB.md](HANDOFF_WEB.md).
+Đã kiểm thử trực tiếp trên hạ tầng Cloudflare thật (không phải giả lập): đăng nhập, tạo/sửa/xoá Finding qua UI thật, phát hiện xung đột revision, phân quyền Admin/User, upload ảnh lên R2, CORS đúng origin, 20 tài khoản thật đã tạo. Số liệu D1 thật đo ngày 2026-10-06: 20 users (2 admin), 605 Finding chưa xoá, 1 settings, 760 dòng audit. Chi tiết lịch sử di chuyển và các lần kiểm thử: [HANDOFF_WEB.md](HANDOFF_WEB.md).
 
 Tài liệu chính thức: [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site), [Cloudflare Workers](https://developers.cloudflare.com/workers/), [Cloudflare D1](https://developers.cloudflare.com/d1/), [Cloudflare R2](https://developers.cloudflare.com/r2/).

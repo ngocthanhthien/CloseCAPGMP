@@ -1,4 +1,4 @@
-# Handoff bản web — cập nhật 2026-09-30
+# Handoff bản web — cập nhật 2026-10-06
 
 Bàn giao để tiếp tục chỉnh sửa bằng công cụ AI khác. Đọc file này trước, sau đó [README.md](README.md) để biết hướng dẫn setup/vận hành đầy đủ.
 
@@ -9,7 +9,8 @@ Site thật https://ngocthanhthien.github.io/CloseCAPGMP/ chạy 100% trên Clou
 - **Hạ tầng**: D1 `gmp-closegap-db`, R2 `gmp-mediasave`, Worker `gmp-closegap-api` (`https://gmp-closegap-api.dangthanhbinh53.workers.dev`), tất cả trên tài khoản Cloudflare `dangthanhbinh53@gmail.com`.
 - **Code Worker**: `cloudflare/worker/src/*.js` — port đủ 17 rule nghiệp vụ của `gmp_save_record` cũ, cộng auth tự xây (PBKDF2 100.000 vòng lặp — mức trần cứng của Workers, không có trong tài liệu Cloudflare, phát hiện qua test thật) + JWT tự ký. Chi tiết lệnh thao tác: [cloudflare/README.md](cloudflare/README.md).
 - **Frontend**: [cloud.js](cloud.js) + [config.js](config.js) ở gốc repo LÀ bản Cloudflare — không còn thư mục `frontend-ready` riêng, gắn thẳng vào `index.html` production.
-- **Dữ liệu thật đã chuyển xong**: 20 tài khoản (từ CSV người dùng cung cấp, mỗi người mật khẩu mới — mật khẩu Supabase Auth cũ không thể xuất/migrate, giới hạn kỹ thuật đã thống nhất trước với người dùng) + toàn bộ Finding/Action phục hồi từ backup JSON xuất ra từ hệ Supabase cũ trước khi cắt chuyển.
+- **Dữ liệu thật đã chuyển xong**: 20 tài khoản (từ CSV người dùng cung cấp, mỗi người mật khẩu mới — mật khẩu Supabase Auth cũ không thể xuất/migrate, giới hạn kỹ thuật đã thống nhất trước với người dùng) + Finding/Action đã phục hồi từ backup JSON của hệ cũ. **Số liệu D1 thật đo 2026-10-06** (`wrangler d1 execute ... --remote`): 20 users (2 admin), 605 Finding chưa xoá, 1 settings, 760 dòng audit, DB ~72 MB; Worker `/me` không token trả 401 (đang sống). Muốn đo lại: `cd cloudflare/worker && npx wrangler d1 execute gmp-closegap-db --remote --command "select count(*) from gmp_records"`.
+- **Dọn dẹp thư mục 2026-10-06**: repo đã gọn (chỉ còn `index.html`, `cloud.js`, `config.js`, `README.md`, `HANDOFF_WEB.md`, `.nojekyll`, `.claude/launch.json` cho preview cục bộ, và `cloudflare/`). Không còn file lỗi thời nào được track. `cloudflare/worker/.wrangler/` là cache cục bộ của wrangler (đã gitignore, tự tạo lại được). `.gitignore` còn 2 dòng cũ (`GMP_CloseGap_App.html`, `HANDOFF_GMP_CloseGap_App.md`) để chặn lỡ commit bản offline gốc — giữ có chủ đích.
 - **Đã sửa 1 sự cố production thật sau cắt chuyển** — xem mục 1.
 
 ## 1. Sự cố đã xử lý: retry-storm do `errcode='40001'`
